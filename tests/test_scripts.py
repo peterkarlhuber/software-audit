@@ -786,3 +786,18 @@ def test_missing_tsc_in_mixed_project_makes_lint_incomplete(tmp_path, monkeypatc
     monkeypatch.setattr(run_tools.shutil, "which", lambda t: "/usr/bin/" + t)
     monkeypatch.setattr(run_tools, "RUN_META", {"workspace": str(root)})
     assert run_tools.lint(root, td, inv)["status"] == "ok"
+
+
+def test_typescript_without_tsconfig_makes_lint_incomplete(tmp_path, monkeypatch):
+    import run_tools
+    root = tmp_path / "r"
+    root.mkdir()
+    (root / "a.py").write_text("x = 1\n")
+    (root / "b.ts").write_text("export const y = 1;\n")
+    inv = [{"path": p, "in_scope": True} for p in ("a.py", "b.ts")]
+    monkeypatch.setattr(run_tools.shutil, "which", lambda t: "/usr/bin/" + t)
+    monkeypatch.setattr(run_tools, "run", lambda cmd, cwd, timeout=1800: (0, "[]", ""))
+    td = tmp_path / "tools"
+    td.mkdir()
+    out = run_tools.lint(root, td, inv)
+    assert out["status"] == "incomplete" and out["not_run"] == ["tsc"] and "no tsconfig.json" in out["note"]
