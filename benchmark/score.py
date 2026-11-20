@@ -7,7 +7,9 @@ A seeded bug counts as found if a finding (status not invalid_evidence) overlaps
 its locations (+-3 lines) AND belongs to one of its checklist items or has one of its
 keywords in the title, or if one of its
 checklist items ended as FAIL with evidence in one of its locations.
-A finding that overlaps a decoy and none of the bugs counts as a false positive.
+A finding that overlaps a decoy and none of the bugs counts as a false positive if it
+makes the claim the decoy invites (one of the decoy's items or keywords). Other findings
+at a decoy location (e.g. a logging concern on the same lines) go to manual review.
 Other findings are listed for manual review (real unintended bug or false positive).
 """
 import argparse
@@ -29,6 +31,13 @@ def overlaps(file, lines, loc):
     except ValueError:
         return True  # file-level match
     return a <= loc["lines"][1] + TOL and b >= loc["lines"][0] - TOL
+
+
+def decoy_claim(f, decoy):
+    if not decoy.get("items") and not decoy.get("keywords"):
+        return True
+    title = (f.get("title") or "").lower()
+    return f.get("checklist_id") in decoy.get("items", []) or any(k in title for k in decoy.get("keywords", []))
 
 
 def main():
@@ -64,7 +73,8 @@ def main():
     for f in findings:
         if f["id"] in used:
             continue
-        if any(overlaps(f.get("file"), f.get("lines"), l) for d in truth.get("decoys", []) for l in d["locations"]):
+        if any(overlaps(f.get("file"), f.get("lines"), l) and decoy_claim(f, d)
+               for d in truth.get("decoys", []) for l in d["locations"]):
             fp.append(f["id"])
         else:
             review.append(f["id"])

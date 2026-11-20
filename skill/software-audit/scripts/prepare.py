@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (CHECKLIST_DIR, git, load_checklists, load_yaml, repo_root,  # noqa: E402
                     sandbox_available, sha256_file, write_json, die)
 
-SKILL_VERSION = "0.3.0"
+SKILL_VERSION = "0.3.1"
 
 CLASS_RULES = [
     ("vendored", re.compile(r"(^|/)(vendor|third_party|node_modules)/")),
@@ -120,6 +120,9 @@ def main():
                    help="allow running tests/builds without bubblewrap (own trusted repos only)")
     ap.add_argument("--extra-checklist", action="append", default=[],
                     help="additional checklist file (absolute path or name in checklists/)")
+    ap.add_argument("--allow-dirty", action="store_true",
+                    help="audit even if tracked files have uncommitted changes (the report then says the "
+                         "audited state is NOT the recorded commit)")
     ap.add_argument("--fact", action="append", default=[], metavar="NAME=yes|no",
                     help="override a detected fact, e.g. --fact processes_personal_data=yes")
     a = ap.parse_args()
@@ -127,9 +130,16 @@ def main():
     root = repo_root(a.repo)
     commit = git(root, "rev-parse", "HEAD").strip()
     dirty = git(root, "status", "--porcelain", "--untracked-files=no").strip()
+    if dirty and not a.allow_dirty:
+        die("the working tree has uncommitted changes to tracked files, so the audit would not match the "
+            "commit. Commit or stash them, or run again with --allow-dirty.\n" + dirty[:2000])
     now = dt.datetime.now(dt.timezone.utc)
     run_id = now.strftime("%Y%m%d-%H%M%S") + "-" + commit[:7]
-    run_dir = root / ".audit" / run_id
+    run_dir, n = root / ".audit" / run_id, 1
+    while run_dir.exists():
+        n += 1
+        run_dir = root / ".audit" / f"{run_id}-{n}"
+    run_id = run_dir.name
     run_dir.mkdir(parents=True)
 
     # Keep audit output out of git status of the audited repo.

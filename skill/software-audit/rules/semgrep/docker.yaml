@@ -1,0 +1,13 @@
+rules:
+  - id: dockerfile-secret-in-build-arg
+    languages: [dockerfile]
+    severity: ERROR
+    message: Secret passed as build argument or environment variable is stored in the image.
+    patterns:
+      - pattern-either:
+          - pattern: ARG $NAME
+          - pattern: ENV $NAME=$VALUE
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: (?i).*(password|secret|token|api_key|apikey|private_key).*
+    metadata: {cwe: "CWE-538"}

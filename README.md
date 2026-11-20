@@ -4,7 +4,7 @@ A repeatable, AI-assisted audit for any Git repository. Open Claude Code in the 
 
 Output: `.audit/<run>/report.md` (to read) and `.audit/<run>/results.json` (machine-readable) inside the audited repository.
 
-> Status: v0.3. The audit checks technical controls and collects evidence; it does not establish legal compliance (GDPR, AI Act, CRA). Every report says so.
+> Status: v0.3.1. The audit checks technical controls and collects evidence; it does not establish legal compliance (GDPR, AI Act, CRA). Every report says so.
 
 ## Install
 
@@ -14,7 +14,7 @@ cd software-audit && ./install.sh        # copies skill/software-audit to ~/.cla
 pip install pyyaml
 ```
 
-Recommended tools (missing ones leave the related checklist items `UNKNOWN`): gitleaks, semgrep, osv-scanner or trivy, syft, hadolint, ruff. For running tests and confirming findings: bubblewrap (Linux).
+Recommended tools (missing ones leave the related checklist items `UNKNOWN`): gitleaks, semgrep, osv-scanner (or pip-audit / trivy), syft, hadolint, ruff. Semgrep also runs the rules bundled in `skill/software-audit/rules/semgrep/`, so it works without network access. For running tests and confirming findings: bubblewrap (Linux).
 
 If you use the skill through claude.ai instead, upload the folder `skill/software-audit` as a skill there. It replaces the older skill of the same name.
 
@@ -27,11 +27,13 @@ In the repository to audit:
 /software-audit with tests           # also runs the test suite and confirming tests (sandboxed)
 ```
 
+Commit or stash your changes first: the audit stops on a dirty working tree so the report matches the commit (`--allow-dirty` overrides this and marks the report).
+
 ## Contents
 
 | Path | Content |
 |---|---|
-| [docs/spec.md](docs/spec.md) | Specification v0.3 |
+| [docs/spec.md](docs/spec.md) | Specification v0.3.1 |
 | [docs/research.md](docs/research.md) | How others build AI-assisted audits today |
 | [skill/software-audit/](skill/software-audit/) | The skill: procedure, checklists, scripts, schema |
 | [benchmark/](benchmark/) | Test repo with 11 known bugs, ground truth and scorer |

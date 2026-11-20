@@ -424,9 +424,12 @@ def render(o):
     run, L = o["run"], []
     L.append(f"# Audit report: {run['repo_name']}")
     L.append("")
-    L.append(f"Commit `{run['commit']}`{' (uncommitted changes present)' if run['dirty'] else ''} · run `{run['run_id']}` · "
-             f"skill {run['skill_version']} · checked {o['checked_at']}")
+    L.append(f"Commit `{run['commit']}` · run `{run['run_id']}` · skill {run['skill_version']} · checked {o['checked_at']}")
     L.append("")
+    if run.get("dirty"):
+        L.append("> **Warning: the audited files are NOT identical to this commit.** Uncommitted changes were present "
+                 "(started with --allow-dirty): " + ", ".join(f"`{d[3:]}`" for d in run.get("dirty_files", [])[:20]))
+        L.append("")
     L.append(f"> **Scope note.** {o['disclaimer']}")
     L.append("")
     L.append("## 1. Summary")

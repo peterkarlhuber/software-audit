@@ -6,8 +6,9 @@ Usage:
 
 Tool groups (checklist items refer to them with `tool:`):
   secrets    Gitleaks (working tree + Git history)
-  sast       Semgrep (config from $AUDIT_SEMGREP_CONFIG, default p/default)
-  deps       OSV-Scanner, else Trivy
+  sast       Semgrep: bundled offline rules (rules/semgrep) + $AUDIT_SEMGREP_CONFIG
+             (default p/default from the registry, skipped if unreachable; "none" = bundled only)
+  deps       OSV-Scanner online -> OSV offline database -> pip-audit -> Trivy
   sbom       Syft (CycloneDX) + licence summary
   lint       Ruff (Python), tsc --noEmit (TypeScript)
   container  Hadolint (+ Trivy config if installed)
@@ -106,16 +107,28 @@ def secrets(root, tools_dir, inv):
                   version=version("gitleaks"), output_file=str(out.relative_to(tools_dir.parent)), findings=fnd)
 
 
+BUNDLED_RULES = Path(__file__).resolve().parent.parent / "rules" / "semgrep"
+
+
 def sast(root, tools_dir, inv):
+    """Semgrep with the bundled offline rules plus, if reachable, an extra config
+    ($AUDIT_SEMGREP_CONFIG, default the registry ruleset p/default).
+    Set AUDIT_SEMGREP_CONFIG=none to use the bundled rules only."""
     if not shutil.which("semgrep"):
         return missing(tools_dir, "sast", ["semgrep"])
-    config = os.environ.get("AUDIT_SEMGREP_CONFIG", "p/default")
-    cmd = ["semgrep", "scan", "--config", config, "--json", "--metrics=off", "--disable-version-check", str(root)]
-    code, so, se = run(cmd, root)
-    if code not in (0, 1) or not so.strip().startswith("{"):
+    extra = os.environ.get("AUDIT_SEMGREP_CONFIG", "p/default")
+    base = ["semgrep", "scan", "--json", "--metrics=off", "--disable-version-check", "--config", str(BUNDLED_RULES)]
+    note = ""
+    attempts = [base + ["--config", extra, str(root)]] if extra and extra != "none" else []
+    attempts.append(base + [str(root)])
+    for cmd in attempts:
+        code, so, se = run(cmd, root)
+        if code in (0, 1) and so.strip().startswith("{"):
+            break
+        note = f"config {extra} unavailable ({(se.strip().splitlines() or ['?'])[-1][:200]}); bundled rules only"
+    else:
         return record(tools_dir, "sast", status="error", tool="semgrep", command=cmd, exit_code=code,
-                      version=version("semgrep"), note=(se.strip().splitlines() or [so[-500:]])[-1][-500:]
-                      + " (the default config p/default is downloaded from semgrep.dev; set AUDIT_SEMGREP_CONFIG to a local rules folder to run offline)")
+                      version=version("semgrep"), note=(se.strip().splitlines() or [so[-500:]])[-1][-500:])
     rel = save_raw(tools_dir, "sast.raw.json", so)
     raw = json.loads(so)
     fnd = []
@@ -125,57 +138,98 @@ def sast(root, tools_dir, inv):
             path = str(Path(path).resolve().relative_to(root))
         except ValueError:
             pass
-        fnd.append({"tool": "semgrep", "rule": x.get("check_id"), "file": path, "line": x.get("start", {}).get("line"),
-                    "message": x.get("extra", {}).get("message", "")[:500],
+        fnd.append({"tool": "semgrep", "rule": x.get("check_id", "").split(".")[-1], "file": path,
+                    "line": x.get("start", {}).get("line"), "message": x.get("extra", {}).get("message", "")[:500],
                     "severity": {"ERROR": "high", "WARNING": "medium"}.get(x.get("extra", {}).get("severity"), "low")})
-    return record(tools_dir, "sast", status="ran", tool="semgrep", command=cmd, exit_code=code, config=config,
-                  version=version("semgrep"), output_file=rel, findings=fnd,
-                  scanned_files=len(raw.get("paths", {}).get("scanned", [])))
+    rule_errors = [e.get("message", "")[:200] for e in raw.get("errors", []) if e.get("level") != "warn"]
+    if rule_errors:
+        note = (note + "; " if note else "") + f"{len(rule_errors)} semgrep errors: {rule_errors[0]}"
+    return record(tools_dir, "sast", status="ran", tool="semgrep", command=cmd, exit_code=code,
+                  rulesets=[cmd[i + 1] for i, c in enumerate(cmd) if c == "--config"], version=version("semgrep"),
+                  output_file=rel, findings=fnd, note=note, scanned_files=len(raw.get("paths", {}).get("scanned", [])))
+
+
+def _osv_findings(raw, root, tool):
+    fnd = []
+    for res in raw.get("results", []):
+        src = res.get("source", {}).get("path", "")
+        try:
+            src = str(Path(src).resolve().relative_to(root))
+        except ValueError:
+            pass
+        for pkg in res.get("packages", []):
+            sev = {}
+            for g in pkg.get("groups", []):
+                for i in g.get("ids", []):
+                    sev[i] = g.get("max_severity")
+            for v in pkg.get("vulnerabilities", []):
+                fnd.append({"tool": tool, "rule": v.get("id"), "file": src, "line": None,
+                            "package": f"{pkg['package'].get('name')}@{pkg['package'].get('version')}",
+                            "message": (v.get("summary") or "")[:300], "cvss": sev.get(v.get("id")),
+                            "severity": cvss_to_sev(sev.get(v.get("id")))})
+    return fnd
 
 
 def deps(root, tools_dir, inv):
+    """Known vulnerabilities in dependencies. Tries, in order:
+    OSV-Scanner online, OSV-Scanner with its offline database (downloaded or cached),
+    pip-audit (PyPI advisory data, Python requirements files), Trivy."""
+    tried = []
     if shutil.which("osv-scanner"):
-        for cmd in (["osv-scanner", "scan", "source", "--format", "json", "-r", str(root)],
-                    ["osv-scanner", "--format", "json", "-r", str(root)]):
+        variants = [("osv-scanner (online)", ["osv-scanner", "--format", "json", "-r", str(root)]),
+                    ("osv-scanner (offline database)", ["osv-scanner", "--format", "json", "--experimental-offline",
+                                                        "--experimental-download-offline-databases", "-r", str(root)]),
+                    ("osv-scanner (cached offline database)", ["osv-scanner", "--format", "json",
+                                                               "--experimental-offline", "-r", str(root)])]
+        for label, cmd in variants:
             code, so, se = run(cmd, root)
-            if so.strip().startswith("{"):
+            if code in (0, 1) and so.strip().startswith("{") and "query failed" not in se:
                 rel = save_raw(tools_dir, "deps.raw.json", so)
-                raw = json.loads(so)
-                fnd = []
-                for res in raw.get("results", []):
-                    src = res.get("source", {}).get("path", "")
-                    try:
-                        src = str(Path(src).resolve().relative_to(root))
-                    except ValueError:
-                        pass
-                    for pkg in res.get("packages", []):
-                        sev = {}
-                        for g in pkg.get("groups", []):
-                            for i in g.get("ids", []):
-                                sev[i] = g.get("max_severity")
-                        for v in pkg.get("vulnerabilities", []):
-                            fnd.append({"tool": "osv-scanner", "rule": v.get("id"), "file": src, "line": None,
-                                        "package": f"{pkg['package'].get('name')}@{pkg['package'].get('version')}",
-                                        "message": (v.get("summary") or "")[:300], "cvss": sev.get(v.get("id")),
-                                        "severity": cvss_to_sev(sev.get(v.get("id")))})
-                return record(tools_dir, "deps", status="ran", tool="osv-scanner", command=cmd, exit_code=code,
-                              version=version("osv-scanner"), output_file=rel, findings=fnd)
-        if not shutil.which("trivy"):
-            return record(tools_dir, "deps", status="error", tool="osv-scanner", command=cmd, exit_code=code,
-                          note=" ".join((se or so).strip().splitlines()[-2:])[-600:])
+                return record(tools_dir, "deps", status="ran", tool=label, command=cmd, exit_code=code,
+                              version=version("osv-scanner"), output_file=rel,
+                              findings=_osv_findings(json.loads(so), root, "osv-scanner"),
+                              note="; ".join(tried))
+            tried.append(f"{label} failed: {' '.join((se or so).strip().splitlines()[-1:])[-200:]}")
+    reqs = has(inv, r"(^|/)requirements[^/]*\.txt$")
+    if reqs and shutil.which("pip-audit"):
+        fnd, cmds, ok = [], [], True
+        for r in reqs:
+            cmd = ["pip-audit", "-r", str(root / r), "--no-deps", "--disable-pip", "--format", "json",
+                   "--vulnerability-service", "pypi", "--progress-spinner", "off"]
+            code, so, se = run(cmd, root)
+            cmds.append(cmd)
+            if not so.strip().startswith("{"):
+                ok = False
+                tried.append(f"pip-audit failed on {r}: {(se.strip().splitlines() or ['?'])[-1][:200]}")
+                break
+            save_raw(tools_dir, f"deps.pip-audit.{Path(r).name}.json", so)
+            for d in json.loads(so).get("dependencies", []):
+                for v in d.get("vulns", []):
+                    fnd.append({"tool": "pip-audit", "rule": v.get("id"), "file": r, "line": None,
+                                "package": f"{d.get('name')}@{d.get('version')}", "aliases": v.get("aliases", []),
+                                "message": (v.get("description") or "")[:300], "severity": "unknown",
+                                "fix_versions": v.get("fix_versions", [])})
+        if ok:
+            npm_note = "; package.json not covered by pip-audit" if has(inv, r"(^|/)package\.json$") else ""
+            return record(tools_dir, "deps", status="ran", tool="pip-audit", command=cmds, version=version("pip-audit"),
+                          findings=fnd, note="; ".join(tried) + npm_note)
     if shutil.which("trivy"):
-        cmd = ["trivy", "fs", "--scanners", "vuln", "--format", "json", "--quiet", str(root)]
-        code, so, se = run(cmd, root)
-        if code != 0 or not so.strip().startswith("{"):
-            return record(tools_dir, "deps", status="error", tool="trivy", command=cmd, exit_code=code, note=(se or so)[-2000:])
-        rel = save_raw(tools_dir, "deps.raw.json", so)
-        fnd = [{"tool": "trivy", "rule": v.get("VulnerabilityID"), "file": r.get("Target"), "line": None,
-                "package": f"{v.get('PkgName')}@{v.get('InstalledVersion')}", "message": (v.get("Title") or "")[:300],
-                "severity": (v.get("Severity") or "unknown").lower()}
-               for r in json.loads(so).get("Results", []) for v in (r.get("Vulnerabilities") or [])]
-        return record(tools_dir, "deps", status="ran", tool="trivy", command=cmd, exit_code=code,
-                      version=version("trivy"), output_file=rel, findings=fnd)
-    return missing(tools_dir, "deps", ["osv-scanner", "trivy"])
+        for label, cmd in (("trivy", ["trivy", "fs", "--scanners", "vuln", "--format", "json", "--quiet", str(root)]),
+                           ("trivy (offline)", ["trivy", "fs", "--scanners", "vuln", "--format", "json", "--quiet",
+                                                "--offline-scan", "--skip-db-update", str(root)])):
+            code, so, se = run(cmd, root)
+            if code == 0 and so.strip().startswith("{"):
+                rel = save_raw(tools_dir, "deps.raw.json", so)
+                fnd = [{"tool": "trivy", "rule": v.get("VulnerabilityID"), "file": r.get("Target"), "line": None,
+                        "package": f"{v.get('PkgName')}@{v.get('InstalledVersion')}", "message": (v.get("Title") or "")[:300],
+                        "severity": (v.get("Severity") or "unknown").lower()}
+                       for r in json.loads(so).get("Results", []) for v in (r.get("Vulnerabilities") or [])]
+                return record(tools_dir, "deps", status="ran", tool=label, command=cmd, exit_code=code,
+                              version=version("trivy"), output_file=rel, findings=fnd, note="; ".join(tried))
+            tried.append(f"{label} failed: {(se.strip().splitlines() or ['?'])[-1][:200]}")
+    if not tried:
+        return missing(tools_dir, "deps", ["osv-scanner", "pip-audit", "trivy"])
+    return record(tools_dir, "deps", status="error", tool="osv-scanner/pip-audit/trivy", note="; ".join(tried))
 
 
 def cvss_to_sev(score):

@@ -1,4 +1,4 @@
-# Software Audit – Specification v0.3
+# Software Audit – Specification v0.3.1
 
 ## 1. Goal
 
@@ -8,7 +8,7 @@ The audit covers four areas: functionality and quality, security, governance and
 
 ## 2. Design
 
-The research in [research.md](research.md) shows that the leading systems share three things. Deterministic tools run first. An agent reasons on top. Findings are confirmed by running them where possible. None of them depends on many reviewer roles, and single runs vary a lot. So v0.3 is:
+The research in [research.md](research.md) shows that the leading systems share three things. Deterministic tools run first. An agent reasons on top. Findings are confirmed by running them where possible. None of them depends on many reviewer roles, and single runs vary a lot. So v0.3.1 is:
 
 **standard tools + one agent with one skill + fixed checklists + tests for critical findings + a script that checks the agent's output.**
 
@@ -20,7 +20,9 @@ The research in [research.md](research.md) shows that the leading systems share 
 | Checklists | `skill/software-audit/checklists/*.yaml` | 49 items: what to check, how, what counts as evidence |
 | `prepare.py` | `skill/software-audit/scripts/` | Pin commit, inventory, detect facts, select applicable items |
 | `run_tools.py` | same | Run Gitleaks, Semgrep, OSV-Scanner/Trivy, Syft, Ruff/tsc, Hadolint, tests |
-| `run_test.py` | same | Run a confirming test in a sandboxed copy of the repo |
+| `run_test.py` | same | Run a confirming test in a sandboxed copy of the repo and check that it is a real reproduction |
+| `audit_pytest_plugin.py` | same | Loaded by `run_test.py`: records failures and which cited lines ran |
+| Semgrep rules | `skill/software-audit/rules/semgrep/` | Bundled rules for Python, JavaScript and Dockerfiles, so SAST works offline |
 | `check_run.py` | same | Verify the agent's output, set final results and statuses, write the report |
 | Benchmark | `benchmark/` | Repo with 11 known bugs, 2 decoys and 1 manipulation attempt, plus scorer |
 
@@ -28,10 +30,10 @@ The agent works through the checklist in three passes: functionality and operati
 
 ## 3. Procedure
 
-1. **Prepare** (`prepare.py`). Records the full commit SHA and whether the working tree has uncommitted changes. Lists every tracked file with hash, line count and class. Generated, vendored and binary files are listed as excluded, with the reason. Detects facts from code signals: `has_api`, `has_ui`, `has_db`, `has_tests`, `has_ai_features`, `processes_personal_data`, `has_docker`, `has_ci`. These facts decide which items apply. A wrong fact can be overridden with `--fact NAME=yes|no`, and the override is recorded. Output goes to `.audit/<run_id>/` inside the audited repo, which is excluded from Git.
-2. **Tools** (`run_tools.py`). Runs every tool that fits the stack and stores the raw output. Tool findings are normalised and get IDs (`T-sast-004`). A missing or failing tool is recorded. Checklist items that depend on it can then not be `PASS`.
+1. **Prepare** (`prepare.py`). Records the full commit SHA. If tracked files have uncommitted changes, it stops, because the audit would not match the commit. `--allow-dirty` overrides this; the run is then marked and the report starts with a warning. Lists every tracked file with hash, line count and class. Generated, vendored and binary files are listed as excluded, with the reason. Detects facts from code signals: `has_api`, `has_ui`, `has_db`, `has_tests`, `has_ai_features`, `processes_personal_data`, `has_docker`, `has_ci`. These facts decide which items apply. A wrong fact can be overridden with `--fact NAME=yes|no`, and the override is recorded. Output goes to `.audit/<run_id>/` inside the audited repo, which is excluded from Git.
+2. **Tools** (`run_tools.py`). Runs every tool that fits the stack and stores the raw output. Semgrep always runs the bundled rules, plus `p/default` (or `$AUDIT_SEMGREP_CONFIG`) when reachable. The dependency scan tries, in order: OSV-Scanner online, OSV-Scanner with a downloaded offline database, a cached offline database, pip-audit against PyPI, Trivy. The note in `tools/deps.json` says which one produced the result. Tool findings are normalised and get IDs (`T-sast-004`). A missing or failing tool is recorded. Checklist items that depend on it can then not be `PASS`.
 3. **Passes** (subagents with `pass.md`). For every applicable item, the agent writes a result, the files it examined, how it made sure nothing was missed, and exact quotes as evidence. For each problem it writes a finding. It triages every tool finding of its pass as `real` or `false_positive`, with a reason.
-4. **Confirm** (subagents with `confirm.md`). For each critical or high finding, a fresh subagent sees only the location and the claim. It writes a test that must fail because of the defect, with the marker `AUDIT_CONFIRM:<id>` in the failing assertion. `run_test.py` runs it in a bubblewrap sandbox on a throwaway copy, with no network and an empty environment.
+4. **Confirm** (subagents with `confirm.md`). For each critical or high finding, a fresh subagent sees only the location and the claim. It writes a test that must fail because of the defect, with the marker `AUDIT_CONFIRM:<id>` in the failing assertion. `run_test.py` runs it in a bubblewrap sandbox on a throwaway copy, with no network and an empty environment. The marker alone is not enough (see section 4).
 5. **Check** (`check_run.py`). Applies the rules in section 4 and writes `results.json` and `report.md`.
 6. **Deliver.** The skill tells the user the report path, the counts, the main confirmed risks and what was not checked.
 
@@ -50,6 +52,8 @@ The agent never sets final results or finding statuses. The script does.
 - `FAIL` requires at least one finding with valid evidence. Otherwise it becomes `UNKNOWN`.
 - `N/A` requires a reason.
 
+`PASS` is an evidence-backed audit judgement, not a proof. The rules make sure it rests on opened files, verified quotes and clean tool results, but a completeness statement cannot prove that nothing was missed.
+
 **Evidence and findings**
 - A quote must appear in the cited file within ±3 lines of the cited lines. If it is found elsewhere in the file, the lines are corrected. If it is not found, the evidence is invalid. Quotes need at least 12 characters.
 - Finding statuses:
@@ -61,6 +65,14 @@ The agent never sets final results or finding statuses. The script does.
 | `not_reproduced` | The confirming test passed. The finding stays in the report. |
 | `evidenced` | Medium/low finding with a verified quote |
 | `invalid_evidence` | Quote or file could not be verified, or the cited file was never opened |
+
+**Confirming tests (`run_test.py`).** A test reproduces a finding only if all of these hold:
+- the static check passes: the marker sits in a real `assert` whose condition is not a constant; `assert False`, `raise` or `pytest.fail()` with the marker are `rejected`
+- the test fails (exit code not 0)
+- for pytest: the failure is an `AssertionError` in the test body (not in setup, fixtures or imports) and carries the marker
+- for pytest: the cited lines (±2) were executed during the run. Lines run at import time (for example a `def` line) count only inside the cited range, so importing the file is not enough.
+
+Outcomes: `reproduced` (finding `confirmed`), `reproduced_unverified` (other test runners, where the last two checks are not possible; the finding stays `unconfirmed`), `not_reproduced`, `inconclusive`, `rejected`, `not_run`.
 
 **Coverage.** The script reads the Claude Code session logs for this repository, including subagents. From them it counts which in-scope code files were actually opened. Unopened files are listed in the report. Without a log, coverage is reported as "not measured".
 
@@ -97,9 +109,9 @@ There are no reviewer roles beyond the one agent, no chief, no second model and 
 
 ## 8. Relation to skill v2.5
 
-v0.3 replaces the v2.5 skill under the same name, `software-audit`.
+v0.3.x replaces the v2.5 skill under the same name, `software-audit`.
 
-| v2.5 | v0.3 |
+| v2.5 | v0.3.x |
 |---|---|
 | 12 reviewer roles in parallel + chief | One agent, three passes, fixed checklist |
 | Reviewers decide what to look at | Checklist decides; every item must be answered |
@@ -110,7 +122,13 @@ v0.3 replaces the v2.5 skill under the same name, `software-audit`.
 
 ## 9. Requirements
 
-- Python 3.9+, PyYAML, Git
-- Recommended tools: gitleaks, semgrep, osv-scanner (or trivy), syft, hadolint, ruff. Missing tools leave the related items `UNKNOWN`.
+- Python 3.9+, PyYAML, Git, pytest for confirming tests in Python repos
+- Recommended tools: gitleaks, semgrep, osv-scanner (or pip-audit / trivy), syft, hadolint, ruff. Missing tools leave the related items `UNKNOWN`.
 - bubblewrap (Linux) for running tests and confirming findings
-- Semgrep's default ruleset (`p/default`) and OSV-Scanner need internet access. For offline use, set `AUDIT_SEMGREP_CONFIG` to a local rules folder.
+- Offline: Semgrep runs the bundled rules without network; set `AUDIT_SEMGREP_CONFIG=none` to skip the online ruleset or point it to a local rules folder. The dependency scan needs either osv.dev, a one-time download of the OSV offline database, or PyPI (pip-audit).
+
+## 10. Changes in v0.3.1
+
+- `run_test.py`: a failing test with the marker is no longer enough. Trivial assertions are rejected; for pytest the failure must be the marked assertion in the test body and the cited lines must have run.
+- `prepare.py`: stops on uncommitted changes unless `--allow-dirty` is given.
+- Bundled Semgrep rules and an offline fallback chain for the dependency scan.

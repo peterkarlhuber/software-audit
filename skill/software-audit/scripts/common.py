@@ -129,13 +129,16 @@ def sandboxed_cmd(argv, workdir, network=False):
     return bw + ["--"] + list(argv)
 
 
-def run_repo_code(argv, repo, run, timeout=900, extra_files=None):
+def run_repo_code(argv, repo, run, timeout=900, extra_files=None, extra_env=None, collect=None):
     """Run repo code (tests, builds) in a throwaway copy of the repo.
 
     Uses bubblewrap when available. Without it, runs only if the run was
     started with --allow-exec-unsandboxed (for the user's own trusted repos),
     and always with a stripped environment.
-    Returns dict(status, exit_code, output, sandbox).
+    extra_files: {relative dest: source path} copied into the copy before running.
+    extra_env: additional environment variables. collect: relative paths of JSON
+    files to read back from the copy after the run (returned under "collected").
+    Returns dict(status, exit_code, output, sandbox, collected).
     """
     mode = run.get("exec_mode", "none")
     if mode == "none":
@@ -154,13 +157,21 @@ def run_repo_code(argv, repo, run, timeout=900, extra_files=None):
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)
     env = {k: v for k, v in os.environ.items() if k in SAFE_ENV}
+    env.update(extra_env or {})
     env["HOME"] = str(tmp / "home")
     os.makedirs(env["HOME"], exist_ok=True)
     cmd = sandboxed_cmd(argv, work) if use_bwrap else list(argv)
     try:
         r = subprocess.run(cmd, cwd=work, env=env, capture_output=True, text=True, timeout=timeout)
         out = (r.stdout + "\n" + r.stderr)[-200000:]
-        res = {"status": "ran", "exit_code": r.returncode, "output": out}
+        res = {"status": "ran", "exit_code": r.returncode, "output": out, "collected": {}}
+        for rel in collect or []:
+            p = work / rel
+            if p.is_file():
+                try:
+                    res["collected"][rel] = json.loads(p.read_text(encoding="utf-8"))
+                except ValueError:
+                    pass
     except subprocess.TimeoutExpired:
         res = {"status": "timeout", "exit_code": None, "output": f"timeout after {timeout}s"}
     except FileNotFoundError as e:

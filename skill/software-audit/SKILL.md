@@ -27,6 +27,8 @@ python3 SKILL_DIR/scripts/prepare.py
 
 Add `--allow-exec` only if the user asked for tests to be run in this audit. Add `--allow-exec-unsandboxed` only if the user explicitly asks for it and bubblewrap is not available; it is meant for their own trusted repositories.
 
+If prepare stops because the working tree has uncommitted changes, tell the user. Add `--allow-dirty` only if they want to audit the working tree anyway; the report then carries a warning that it does not match the commit.
+
 Read the printed facts (`has_api`, `has_db`, `processes_personal_data`, `has_ai_features`, …). If a fact is clearly wrong, run prepare again with `--fact NAME=yes|no` and tell the user why. For a project-specific checklist, add `--extra-checklist FILE.yaml`.
 
 ## Step 2: Run tools
@@ -35,7 +37,7 @@ Read the printed facts (`has_api`, `has_db`, `processes_personal_data`, `has_ai_
 python3 SKILL_DIR/scripts/run_tools.py RUN
 ```
 
-Missing tools are fine; the related checklist items will end up `UNKNOWN`. Tell the user which tools were missing.
+Missing tools are fine; the related checklist items will end up `UNKNOWN`. Tell the user which tools were missing. Semgrep always runs the bundled rules in `SKILL_DIR/rules/semgrep/`, plus the online ruleset when it is reachable. The dependency scan falls back to an offline vulnerability database or pip-audit when osv.dev is not reachable.
 
 ## Step 3: Three passes
 

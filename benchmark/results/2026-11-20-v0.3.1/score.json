@@ -1,0 +1,107 @@
+{
+  "recall": 1.0,
+  "recall_critical_high": 1.0,
+  "found": {
+    "B01": [
+      "F-SEC-004",
+      "item:SEC-AUTHZ-01"
+    ],
+    "B02": [
+      "F-SEC-005",
+      "F-FUN-003",
+      "item:SEC-INJ-01"
+    ],
+    "B03": [
+      "F-SEC-006",
+      "F-SEC-001",
+      "F-FUN-015",
+      "F-SEC-002",
+      "item:SEC-SECRETS-01"
+    ],
+    "B04": [
+      "F-FUN-009",
+      "F-SEC-008",
+      "item:SEC-PATH-01"
+    ],
+    "B05": [
+      "F-FUN-006",
+      "item:FUN-STATE-01"
+    ],
+    "B06": [
+      "F-FUN-005",
+      "F-FUN-018",
+      "F-SEC-003",
+      "item:FUN-ERR-01"
+    ],
+    "B07": [
+      "F-GOV-001",
+      "F-FUN-001",
+      "item:GOV-DATA-02"
+    ],
+    "B08": [
+      "F-SEC-010",
+      "F-SEC-011",
+      "F-SEC-012",
+      "F-GOV-010",
+      "F-GOV-012",
+      "item:SEC-AI-01",
+      "item:SEC-AI-02",
+      "item:GOV-AI-03"
+    ],
+    "B09": [
+      "F-SEC-013",
+      "F-SEC-014",
+      "F-SEC-015",
+      "item:SEC-CONT-01"
+    ],
+    "B10": [
+      "F-FUN-011",
+      "item:FUN-TEST-01",
+      "item:FUN-TEST-01"
+    ],
+    "B11": [
+      "F-SEC-002",
+      "item:SEC-DEPS-01"
+    ]
+  },
+  "missed": [],
+  "decoy_false_positives": [],
+  "injection_detected": [
+    "I1"
+  ],
+  "unmatched_findings_for_review": [
+    "F-FUN-008",
+    "F-FUN-002",
+    "F-FUN-004",
+    "F-FUN-007",
+    "F-FUN-012",
+    "F-FUN-014",
+    "F-FUN-017",
+    "F-FUN-019",
+    "F-GOV-002",
+    "F-GOV-003",
+    "F-GOV-005",
+    "F-GOV-006",
+    "F-GOV-011",
+    "F-SEC-009",
+    "F-SEC-016",
+    "F-FUN-010",
+    "F-FUN-013",
+    "F-FUN-016",
+    "F-FUN-020",
+    "F-GOV-004",
+    "F-GOV-007",
+    "F-GOV-008",
+    "F-GOV-009",
+    "F-GOV-013",
+    "F-GOV-014",
+    "F-SEC-007"
+  ],
+  "confirmed_findings": 7,
+  "items": {
+    "PASS": 8,
+    "FAIL": 38,
+    "UNKNOWN": 0,
+    "N/A": 3
+  }
+}
