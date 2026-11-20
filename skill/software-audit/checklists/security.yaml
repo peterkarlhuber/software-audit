@@ -123,6 +123,14 @@
   evidence: file:line per use of model output
   severity_if_fail: high
 
+- id: SEC-EXEC-01
+  area: security
+  title: Untrusted code, commands and data are not executed without isolation
+  applies_if: always
+  how: Find every place that runs commands or code (subprocess, shell, eval/exec, dynamic import, plugin loading) or deserialises data (pickle, yaml.load, marshal). For each, check whether its input can come from users, files, repositories, e-mails, web pages or model output. Where third-party code is run on purpose (tests, builds, plugins), check the isolation - throwaway copy, no network, no credentials in the environment, limited write access - and what happens when isolation is not available.
+  evidence: file:line per execution point and the isolation used
+  severity_if_fail: high
+
 - id: SEC-CONT-01
   area: security
   title: Containers are hardened

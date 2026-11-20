@@ -11,9 +11,9 @@
 - id: OPS-CI-01
   area: operations
   title: CI runs tests and checks on every change
-  applies_if: has_ci
-  how: Read the CI definitions. Check which jobs run tests, lint and security checks, and on which events.
-  evidence: CI file:line per job
+  applies_if: always
+  how: Read the CI definitions. Check which jobs run tests, lint and security checks, and on which events. If the repository has no CI at all, this item FAILs; cite the README or build file that documents how tests are run instead.
+  evidence: CI file:line per job, or the file showing that there is no CI
   severity_if_fail: low
 
 - id: OPS-CONF-01
