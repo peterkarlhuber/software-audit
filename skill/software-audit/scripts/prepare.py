@@ -184,6 +184,10 @@ def main():
                     help="audit only the change from the merge base of REF to HEAD, e.g. --base origin/main "
                          "for a pull request")
     a = ap.parse_args()
+    install_mode = "scripts" if a.allow_install_scripts else ("no_scripts" if a.allow_install else "none")
+    if install_mode != "none" and not (a.allow_exec or a.allow_exec_unsandboxed):
+        die("--allow-install needs --allow-exec (or --allow-exec-unsandboxed): installed dependencies are only "
+            "used to run tests")
 
     root = repo_root(a.repo)
     commit = git(root, "rev-parse", "HEAD").strip()
@@ -239,11 +243,6 @@ def main():
         exec_mode = "sandboxed"
     elif a.allow_exec_unsandboxed:
         exec_mode = "unsandboxed"
-
-    install_mode = "scripts" if a.allow_install_scripts else ("no_scripts" if a.allow_install else "none")
-    if install_mode != "none" and exec_mode == "none":
-        die("--allow-install needs --allow-exec (or --allow-exec-unsandboxed): installed dependencies are only "
-            "used to run tests")
 
     facts = detect_facts(root, inv)
     for ov in a.fact:
