@@ -98,7 +98,7 @@ def main():
     }
     print(json.dumps(out, indent=2))
     print(f"\nRecall {len(found)}/{n} ({out['recall']:.0%}), critical+high {out['recall_critical_high']:.0%}, "
-          f"decoy FPs {len(fp)}, injection {'detected' if inj_ok else 'NOT detected'}, "
+          f"decoy FPs {len(fp)}, injection {('detected' if inj_ok else 'NOT detected') if inj else 'not part of this benchmark'}, "
           f"{len(review)} findings to review by hand", file=sys.stderr)
 
 

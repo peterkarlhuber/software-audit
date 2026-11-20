@@ -3,7 +3,9 @@
 
 Usage:
   prepare.py [--repo PATH] [--allow-exec | --allow-exec-unsandboxed] [--extra-checklist FILE.yaml ...]
-             [--exclude PATH ...] [--fact NAME=yes|no ...] [--allow-dirty]
+             [--exclude PATH ...] [--fact NAME=yes|no ...] [--allow-dirty] [--base REF]
+
+--base REF audits only the change from the merge base of REF to HEAD (a pull request or branch).
 
 Creates <repo>/.audit/<run_id>/ with run.json, inventory.json, facts.json, items.json
 and prints the run folder path.
@@ -18,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (CHECKLIST_DIR, git, load_checklists, load_yaml, repo_root,  # noqa: E402
                     sandbox_available, sha256_file, write_json, die)
 
-SKILL_VERSION = "0.3.2"
+SKILL_VERSION = "0.3.3"
 
 CLASS_RULES = [
     ("vendored", re.compile(r"(^|/)(vendor|third_party|node_modules)/")),
@@ -52,6 +54,43 @@ FACT_SIGNALS = {
     "has_docker": [(r"(^|/)Dockerfile", r".")],
     "has_ci": [(r"(^|/)(\.github/workflows/|\.gitlab-ci\.yml|\.circleci/)", r".")],
 }
+
+
+def changed_lines(root, base_commit):
+    """Files changed between base_commit and HEAD with their changed line ranges (new side).
+
+    Returns ({path: ["12-20", ...]}, [deleted paths]). A pure deletion inside a file is recorded
+    as the line where it happened, so a removed check still counts as part of the change.
+    An empty range list means "changed, no line information" (binary file, pure rename)."""
+    files, deleted = {}, []
+    status = git(root, "-c", "core.quotePath=false", "diff", "--name-status", "-z", "-M",
+                 "--no-ext-diff", base_commit, "HEAD").split("\0")
+    i = 0
+    while i < len(status) and status[i]:
+        code = status[i]
+        if code.startswith(("R", "C")):
+            new = status[i + 2]
+            i += 3
+        else:
+            new = status[i + 1]
+            i += 2
+        if code.startswith("D"):
+            deleted.append(new)
+        else:
+            files[new] = []
+    cur = None
+    patch = git(root, "-c", "core.quotePath=false", "diff", "--unified=0", "--no-color", "--no-ext-diff",
+                "-M", base_commit, "HEAD")
+    for line in patch.splitlines():
+        if line.startswith("+++ "):
+            path = line[4:]
+            cur = path[2:] if path.startswith("b/") else None
+        elif line.startswith("@@") and cur in files:
+            m = re.match(r"@@ -\S+ \+(\d+)(?:,(\d+))? @@", line)
+            if m:
+                start, n = int(m.group(1)), int(m.group(2) if m.group(2) is not None else 1)
+                files[cur].append(f"{max(start, 1)}-{start + n - 1}" if n else f"{max(start, 1)}-{max(start, 1)}")
+    return files, deleted
 
 
 def classify(path, data):
@@ -135,6 +174,9 @@ def main():
                          "a deliberately vulnerable demo app; listed in the report")
     ap.add_argument("--fact", action="append", default=[], metavar="NAME=yes|no",
                     help="override a detected fact, e.g. --fact processes_personal_data=yes")
+    ap.add_argument("--base", metavar="REF",
+                    help="audit only the change from the merge base of REF to HEAD, e.g. --base origin/main "
+                         "for a pull request")
     a = ap.parse_args()
 
     root = repo_root(a.repo)
@@ -152,6 +194,21 @@ def main():
             die(f"bad --exclude {e!r}: give a path relative to the repository root")
         skip.append(e)
     inv = build_inventory(root, skip)
+    change = None
+    if a.base:
+        mb = git(root, "merge-base", a.base, "HEAD", check=False).strip()
+        if not mb:
+            die(f"cannot find a merge base of {a.base!r} and HEAD. Fetch the base branch first "
+                f"(e.g. git fetch origin main; in a shallow clone git fetch --unshallow).")
+        files, deleted = changed_lines(root, mb)
+        by_path = {f["path"]: f for f in inv}
+        files = {p: r for p, r in files.items() if by_path.get(p, {}).get("in_scope")}
+        if not files and not deleted:
+            die(f"no in-scope file changed between {a.base} ({mb[:12]}) and HEAD; nothing to audit")
+        for p in files:
+            by_path[p]["changed"] = True
+        change = {"base": a.base, "base_commit": mb, "files": files, "deleted": deleted,
+                  "commits": len(git(root, "rev-list", f"{mb}..HEAD").split())}
     unmatched = [e for e in skip if not any(f["class"] == "excluded" and (f["path"] == e or f["path"].startswith(e + "/"))
                                             for f in inv)]
     if unmatched:
@@ -221,6 +278,7 @@ def main():
         "sandbox_available": sandbox_available(),
         "extra_checklists": [str(p) for p in extra],
         "exclude": skip,
+        "change": change,
     }
     write_json(run_dir / "run.json", run)
     write_json(run_dir / "inventory.json", inv)
@@ -232,6 +290,9 @@ def main():
     print(f"commit {commit[:12]}{' (working tree has uncommitted changes)' if dirty else ''}")
     print(f"files: {len(inv)} total, {in_scope} in scope"
           + (f" (excluded by --exclude: {', '.join(skip)})" if skip else ""))
+    if change:
+        print(f"change audit: {len(change['files'])} changed files, {len(change['deleted'])} deleted, "
+              f"{change['commits']} commits since {a.base} ({change['base_commit'][:12]})")
     print("facts: " + ", ".join(f"{k}={'yes' if v['value'] else 'no'}" for k, v in facts.items() if k != "always"))
     by_pass = {}
     for it in applicable:

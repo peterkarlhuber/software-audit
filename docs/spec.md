@@ -1,4 +1,4 @@
-# Software Audit – Specification v0.3.2
+# Software Audit – Specification v0.3.3
 
 ## 1. Goal
 
@@ -36,6 +36,20 @@ The agent works through the checklist in three passes: functionality and operati
 4. **Confirm** (subagents with `confirm.md`). For each critical or high finding, a fresh subagent sees only the location and the claim. It writes a test that must fail because of the defect, with the marker `AUDIT_CONFIRM:<id>` in the failing assertion. `run_test.py` runs it in a bubblewrap sandbox on a throwaway copy, with no network and an empty environment. The marker alone is not enough (see section 4).
 5. **Check** (`check_run.py`). Applies the rules in section 4 and writes `results.json` and `report.md`.
 6. **Deliver.** The skill tells the user the report path, the counts, the main risks and what was not checked.
+
+### Change audits (pull requests, branches)
+
+`prepare.py --base REF` audits only the change from the merge base of `REF` to `HEAD`. It records each changed in-scope file with its changed line ranges (a pure deletion is recorded as the line where it happened) and the deleted files in `run.json` under `change`. Then:
+- `run_tools.py` still runs every tool on the whole repository, but drops tool findings outside the changed lines (±3 lines; findings without a line count if their file changed). The count of dropped findings is recorded.
+- The passes judge each checklist item for the change only: `N/A` if the change does not touch the item's subject, `PASS`/`FAIL` for the changed code read in context.
+- `check_run.py` marks every finding with `in_change`; findings outside the change stay in the report with the note "outside the change". Coverage counts only changed code files.
+- The report starts with a note that the rest of the repository was not reviewed.
+
+The v2.5 skill used a diff to choose reviewer roles. With one agent and a fixed checklist there are no roles to choose; the checklist itself decides relevance, so no routing is needed.
+
+### Several repositories
+
+The skill runs steps 1 to 5 once per repository, then `summarize.py RUN...` writes one overview: per repository the commit, scope (full or change), result counts, findings by severity and confirmed findings, then all critical and high findings across repositories. Every number comes from a run's `results.json`. The v2.5 helpers for finding repositories by name pattern and for role scope strings were not ported: the agent lists repositories itself, and there are no roles.
 
 ## 4. Rules enforced by `check_run.py`
 
@@ -102,6 +116,8 @@ The scorer reports:
 - whether the manipulation attempt was reported
 - findings that need a manual look, which are either real unintended bugs or false positives
 
+A second, small benchmark checks change audits: `benchmark/change/build_target.sh /tmp/postbox-change` builds the same repository with a branch `feature` on top of `main`; audit it with `prepare.py --base main` and score it with `score.py RESULTS --truth benchmark/change/ground_truth.yaml`.
+
 **Rule:** after every change to the skill, the checklists or the scripts, run the benchmark at least once and compare it with the previous result. A change that lowers recall is not kept unless there is a stated reason.
 
 ## 7. Deliberately left out
@@ -128,7 +144,13 @@ v0.3.x replaces the v2.5 skill under the same name, `software-audit`.
 - bubblewrap (Linux) for running tests and confirming findings
 - Offline: Semgrep runs the bundled rules without network; set `AUDIT_SEMGREP_CONFIG=none` to skip the online ruleset or point it to a local rules folder. The dependency scan needs either osv.dev, a one-time download of the OSV offline database, or PyPI (pip-audit).
 
-## 10. Changes in v0.3.2
+## 10. Changes in v0.3.3
+
+- Change audits: `prepare.py --base REF`, tool findings and coverage limited to the change, `in_change` on findings (section 3).
+- Several repositories in one request: `summarize.py` overview.
+- Second benchmark `benchmark/change/` for change audits: a branch that drops an ownership check (must be found) and adds a correct endpoint (decoy).
+
+## 11. Changes in v0.3.2
 
 From the first real audit (the repository auditing itself):
 - `run_test.py`: constant comparisons such as `assert 1 == 2` are rejected like `assert False`.
@@ -138,7 +160,7 @@ From the first real audit (the repository auditing itself):
 - `prepare.py --exclude PATH`; skill files (`SKILL.md`, `.claude/agents|skills|commands`) count as AI features.
 - Checklists: OPS-CI-01 applies always, so a repository without CI fails it instead of N/A; new SEC-EXEC-01 for running untrusted code, commands and data without isolation (50 items).
 
-## 11. Changes in v0.3.1
+## 12. Changes in v0.3.1
 
 - `run_test.py`: a failing test with the marker is no longer enough. Trivial assertions are rejected; for pytest the failure must be the marked assertion in the test body and the cited lines must have run.
 - `prepare.py`: stops on uncommitted changes unless `--allow-dirty` is given.

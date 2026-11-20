@@ -23,6 +23,34 @@ RESULTS = ["PASS", "FAIL", "UNKNOWN", "N/A"]
 SAFE_ENV = {"PATH", "LANG", "LC_ALL", "TERM", "TZ"}
 
 
+def in_change(change, file, lines=None, margin=3):
+    """True if a location lies inside the audited change (prepare.py --base).
+
+    `change` is run.json's "change" entry, or None for a full audit (then everything counts).
+    `lines` is a line number, a "12-20" string or None (file-level location). A file with no
+    recorded line ranges (binary, pure rename) counts as changed as a whole."""
+    if not change:
+        return True
+    p = str(file or "")
+    while p.startswith("./"):
+        p = p[2:]
+    if p not in change.get("files", {}):
+        return False
+    ranges = change["files"][p]
+    if not ranges or lines in (None, ""):
+        return True
+    try:
+        a, _, b = str(lines).partition("-")
+        lo, hi = int(a), int(b or a)
+    except ValueError:
+        return True
+    for r in ranges:
+        s, _, e = r.partition("-")
+        if lo <= int(e or s) + margin and hi >= int(s) - margin:
+            return True
+    return False
+
+
 def die(msg, code=2):
     print(f"error: {msg}", file=sys.stderr)
     sys.exit(code)
