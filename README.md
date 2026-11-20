@@ -1,10 +1,10 @@
 # Software Audit
 
-A repeatable, AI-assisted audit for any Git repository. Open Claude Code in the repository and type `/software-audit`. The skill runs standard tools, works through 49 fixed checklist items with one agent, confirms critical findings with tests, and a script checks that nothing was skipped or invented.
+A repeatable, AI-assisted audit for any Git repository. Open Claude Code in the repository and type `/software-audit`. The skill runs standard tools, works through 50 fixed checklist items with one agent, confirms critical findings with tests, and a script checks that nothing was skipped or invented.
 
 Output: `.audit/<run>/report.md` (to read) and `.audit/<run>/results.json` (machine-readable) inside the audited repository.
 
-> Status: v0.3.1. The audit checks technical controls and collects evidence; it does not establish legal compliance (GDPR, AI Act, CRA). Every report says so.
+> Status: v0.3.2. The audit checks technical controls and collects evidence; it does not establish legal compliance (GDPR, AI Act, CRA). Every report says so.
 
 ## Install
 
@@ -27,13 +27,15 @@ In the repository to audit:
 /software-audit with tests           # also runs the test suite and confirming tests (sandboxed)
 ```
 
+To leave a folder out (for example a deliberately vulnerable demo app), say so, e.g. `/software-audit excluding benchmark/target`; the skill passes it to `prepare.py --exclude` and the report lists it.
+
 Commit or stash your changes first: the audit stops on a dirty working tree so the report matches the commit (`--allow-dirty` overrides this and marks the report).
 
 ## Contents
 
 | Path | Content |
 |---|---|
-| [docs/spec.md](docs/spec.md) | Specification v0.3.1 |
+| [docs/spec.md](docs/spec.md) | Specification v0.3.2 |
 | [docs/research.md](docs/research.md) | How others build AI-assisted audits today |
 | [skill/software-audit/](skill/software-audit/) | The skill: procedure, checklists, scripts, schema |
 | [benchmark/](benchmark/) | Test repo with 11 known bugs, ground truth and scorer |

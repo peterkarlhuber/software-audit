@@ -157,7 +157,7 @@ def test_run_test_requires_permission(run):
     _, rd = run
     d = rd / "tests" / "F-SEC-001"
     d.mkdir(parents=True)
-    (d / "test_x.py").write_text("def test_x():\n    assert 1 == 2, 'AUDIT_CONFIRM:F-SEC-001'\n")
+    (d / "test_x.py").write_text("def test_x():\n    assert len('ab') == 3, 'AUDIT_CONFIRM:F-SEC-001'\n")
     assert run_test(rd, "F-SEC-001", [d / "test_x.py"])["outcome"] == "not_run"  # prepared without --allow-exec
 
 
@@ -261,3 +261,175 @@ def test_prepare_aborts_on_uncommitted_changes(run):
     sh(sys.executable, str(SCRIPTS / "prepare.py"), "--repo", str(repo), "--allow-dirty")
     rd = sorted((repo / ".audit").iterdir())[-1]
     assert json.loads((rd / "run.json").read_text())["dirty"] is True
+
+
+# ---------------------------------------------------------------- v0.3.2
+
+sys.path.insert(0, str(SCRIPTS))
+import check_run  # noqa: E402
+
+
+def test_run_test_rejects_constant_comparison(run):
+    _, rd = run
+    d = rd / "tests" / "F-SEC-001"
+    d.mkdir(parents=True)
+    (d / "test_x.py").write_text("def test_x():\n    assert 1 == 2, 'AUDIT_CONFIRM:F-SEC-001'\n")
+    out = run_test(rd, "F-SEC-001", [d / "test_x.py"])
+    assert out["outcome"] == "rejected" and "constant" in out["reason"]
+    from run_test import trivial_python  # noqa: E402
+    assert "constant" in trivial_python("def test_x():\n    assert 1 == 2, 'M'\n", "M")
+    assert "constant" in trivial_python("def test_x():\n    assert not (3 > 1), 'M'\n", "M")
+    assert trivial_python("def test_x():\n    assert add(1, 2) == 3, 'M'\n", "M") is None
+
+
+def write_transcript(path, commands):
+    lines = [json.dumps({"message": {"content": [{"type": "tool_use", "name": n, "input": i}]}}) for n, i in commands]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n")
+
+
+def test_coverage_follows_cd_loops_globs_and_dotfiles(run, tmp_path):
+    repo, rd = run
+    inv = json.loads((rd / "inventory.json").read_text())
+    inv += [{"path": "app/util.py", "class": "source", "in_scope": True},
+            {"path": "app/other.py", "class": "source", "in_scope": True},
+            {"path": ".env.example", "class": "config", "in_scope": True},
+            {"path": "README.md", "class": "docs", "in_scope": True}]
+    r = check_run.Repo(repo, inv)
+    t = tmp_path / "log.jsonl"
+    write_transcript(t, [
+        ("Bash", {"command": f"cd {repo}/app && for f in api.py util.py; do echo \"== $f\"; cat -n $f; done"}),
+        ("Bash", {"command": f"cd {repo}; cat ./.env.example"}),
+        ("Bash", {"command": "head -50 app/*.py | grep x"}),
+        ("Bash", {"command": "ls README.md"}),
+    ])
+    opened, _ = check_run.opened_files([t], r)
+    assert {"app/api.py", "app/util.py", ".env.example", "app/other.py"} <= opened
+    assert "README.md" not in opened
+
+
+def test_examined_folder_requires_every_file_opened(run, tmp_path):
+    repo, rd = run
+    t = tmp_path / "log.jsonl"
+    write_transcript(t, [("Read", {"file_path": str(repo / "README.md")})])
+    write_pass(rd, [{"id": "SEC-AUTHN-01", "result": "PASS", "examined": ["app"],
+                     "completeness": "Listed every route in app/ with grep for '@app.' and checked each one.",
+                     "evidence": [GOOD_QUOTE]}])
+    sh(sys.executable, str(SCRIPTS / "check_run.py"), str(rd), "--transcripts", str(t))
+    items = {i["id"]: i for i in json.loads((rd / "results.json").read_text())["items"]}
+    assert items["SEC-AUTHN-01"]["result"] == "UNKNOWN"
+    assert "app/api.py" in items["SEC-AUTHN-01"]["reason"]
+
+
+def test_transcripts_found_when_session_started_in_parent_folder(run, tmp_path):
+    repo, rd = run
+    import datetime as dt
+    base = tmp_path / "projects"
+    write_transcript(base / "-somewhere-else" / "s1" / "subagents" / "agent-1.jsonl",
+                     [("Read", {"file_path": str(repo / "app" / "api.py")})])
+    write_transcript(base / "-unrelated" / "s2.jsonl", [("Read", {"file_path": "/elsewhere/x.py"})])
+    found = check_run.find_transcripts(repo, dt.datetime.now(dt.timezone.utc), None, base=base)
+    assert [f.name for f in found] == ["agent-1.jsonl"]
+
+
+def test_missing_session_log_is_listed_as_problem(run, monkeypatch, tmp_path):
+    _, rd = run
+    write_pass(rd, [])
+    env = {**__import__("os").environ, "HOME": str(tmp_path)}
+    subprocess.run([sys.executable, str(SCRIPTS / "check_run.py"), str(rd)], env=env, check=True, capture_output=True)
+    res = json.loads((rd / "results.json").read_text())
+    assert any("coverage not measured" in p for p in res["problems"])
+
+
+def test_tool_backed_finding_is_tool_reported_not_confirmed(run):
+    _, rd = run
+    (rd / "tools").mkdir()
+    (rd / "tools" / "sast.json").write_text(json.dumps({"group": "sast", "status": "findings"}))
+    (rd / "tools" / "sast.findings.json").write_text(json.dumps(
+        [{"tool_id": "T-sast-001", "tool": "semgrep", "file": "app/api.py", "line": 4, "severity": "high"}]))
+    finding = {"id": "F-SEC-001", "checklist_id": "SEC-AUTHZ-01", "title": "No ownership check", "severity": "high",
+               **GOOD_QUOTE, "impact": "Any user reads any item.", "recommendation": "Check the owner.",
+               "tool_ids": ["T-sast-001"]}
+    write_pass(rd, [{"id": "SEC-AUTHZ-01", "result": "FAIL", "finding_ids": ["F-SEC-001"]}], [finding],
+               [{"tool_id": "T-sast-001", "verdict": "real", "reason": "same defect"}])
+    items, findings, _ = check(rd)
+    assert findings["F-SEC-001"]["status"] == "tool_reported"
+    assert items["SEC-AUTHZ-01"]["result"] == "FAIL"
+
+
+def test_prepare_exclude_drops_paths_from_scope_facts_and_evidence(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "demo").mkdir(parents=True)
+    (repo / "demo" / "app.py").write_text("from fastapi import FastAPI\napp = FastAPI()\nimport sqlite3\n")
+    (repo / "tool.py").write_text("print('hello world from the tool')\n")
+    sh("git", "init", "-q", "-b", "main", cwd=repo)
+    sh("git", "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A", cwd=repo)
+    sh("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init", cwd=repo)
+    bad = subprocess.run([sys.executable, str(SCRIPTS / "prepare.py"), "--repo", str(repo), "--exclude", "nope"],
+                         capture_output=True, text=True)
+    assert bad.returncode != 0 and "matches no tracked file" in bad.stdout + bad.stderr
+    sh(sys.executable, str(SCRIPTS / "prepare.py"), "--repo", str(repo), "--exclude", "demo/")
+    rd = next((repo / ".audit").iterdir())
+    assert json.loads((rd / "run.json").read_text())["exclude"] == ["demo"]
+    inv = {f["path"]: f for f in json.loads((rd / "inventory.json").read_text())}
+    assert inv["demo/app.py"]["in_scope"] is False
+    facts = json.loads((rd / "facts.json").read_text())
+    assert facts["has_api"]["value"] is False and facts["has_db"]["value"] is False
+    finding = {"id": "F-SEC-001", "checklist_id": "SEC-SAST-01", "title": "x", "severity": "low",
+               "file": "demo/app.py", "lines": "2", "quote": "app = FastAPI()", "impact": "x", "recommendation": "x"}
+    write_pass(rd, [], [finding])
+    _, findings, res = check(rd)
+    assert findings["F-SEC-001"]["status"] == "invalid_evidence"
+    assert "Excluded by the user" in (rd / "report.md").read_text()
+
+
+def test_skill_files_count_as_ai_feature_and_ci_item_always_applies(run):
+    repo, _ = run
+    (repo / "skill").mkdir()
+    (repo / "skill" / "SKILL.md").write_text("# a skill\n")
+    sh("git", "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A", cwd=repo)
+    sh("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "skill", cwd=repo)
+    out = sh(sys.executable, str(SCRIPTS / "prepare.py"), "--repo", str(repo))
+    rd = Path(out.split("run folder: ")[1].splitlines()[0])
+    assert json.loads((rd / "facts.json").read_text())["has_ai_features"]["value"] is True
+    ids = {i["id"] for i in json.loads((rd / "items.json").read_text())["applicable"]}
+    assert {"OPS-CI-01", "SEC-EXEC-01", "SEC-AI-01"} <= ids
+
+
+def fake_tool(tmp_path, name, script):
+    b = tmp_path / "bin"
+    b.mkdir(exist_ok=True)
+    (b / name).write_text("#!/bin/sh\n" + script + "\n")
+    (b / name).chmod(0o755)
+    return b
+
+
+def test_hadolint_failure_is_an_error_not_clean(tmp_path):
+    import run_tools  # noqa: E402
+    root = tmp_path / "r"
+    root.mkdir()
+    (root / "Dockerfile").write_text("FROM x\n")
+    td = tmp_path / "run" / "tools"
+    td.mkdir(parents=True)
+    b = fake_tool(tmp_path, "hadolint", "echo 'parse error' >&2; exit 1")
+    import os
+    old = os.environ["PATH"]
+    os.environ["PATH"] = f"{b}:{old}"
+    try:
+        out = run_tools.container(root, td, [{"path": "Dockerfile", "in_scope": True}])
+    finally:
+        os.environ["PATH"] = old
+    assert out["status"] == "error" and "parse error" in out["note"]
+
+
+def test_tool_findings_in_excluded_paths_are_dropped(tmp_path):
+    import run_tools  # noqa: E402
+    td = tmp_path / "tools"
+    td.mkdir()
+    run_tools.EXCLUDE[:] = ["demo"]
+    try:
+        out = run_tools.record(td, "sast", status="ran", findings=[{"file": "demo/a.py"}, {"file": "./src/b.py"},
+                                                                      {"file": "demo2/c.py"}])
+    finally:
+        run_tools.EXCLUDE[:] = []
+    assert out["finding_count"] == 2 and out["excluded_findings"] == 1

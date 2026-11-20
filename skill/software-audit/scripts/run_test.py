@@ -43,6 +43,13 @@ TRACE = ".audit_trace.json"
 LINE_TOLERANCE = 2
 
 
+def is_constant(expr):
+    """True if the expression reads no name, attribute, call or subscript, i.e. its value
+    does not depend on the code under test (assert False, assert 1 == 2, assert not 0)."""
+    return not any(isinstance(n, (ast.Name, ast.Attribute, ast.Call, ast.Subscript, ast.Await))
+                   for n in ast.walk(expr))
+
+
 def trivial_python(src, marker):
     """Return a reason if the marker assertion in Python source is trivial, else None.
     Also returns a reason if the marker is not used in any assert statement."""
@@ -57,10 +64,8 @@ def trivial_python(src, marker):
             continue
         if isinstance(node, ast.Assert):
             found = True
-            if isinstance(node.test, ast.Constant) or (
-                    isinstance(node.test, ast.UnaryOp) and isinstance(node.test.op, ast.Not)
-                    and isinstance(node.test.operand, ast.Constant)):
-                return "the marker assertion has a constant condition (e.g. assert False)"
+            if is_constant(node.test):
+                return "the marker assertion has a constant condition (e.g. assert False or assert 1 == 2)"
         elif isinstance(node, ast.Raise):
             return "the marker is raised directly instead of being asserted"
         elif isinstance(node, ast.Call) and getattr(node.func, "attr", getattr(node.func, "id", "")) == "fail":

@@ -3,6 +3,7 @@
 
 Usage:
   prepare.py [--repo PATH] [--allow-exec | --allow-exec-unsandboxed] [--extra-checklist FILE.yaml ...]
+             [--exclude PATH ...] [--fact NAME=yes|no ...] [--allow-dirty]
 
 Creates <repo>/.audit/<run_id>/ with run.json, inventory.json, facts.json, items.json
 and prints the run folder path.
@@ -17,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (CHECKLIST_DIR, git, load_checklists, load_yaml, repo_root,  # noqa: E402
                     sandbox_available, sha256_file, write_json, die)
 
-SKILL_VERSION = "0.3.1"
+SKILL_VERSION = "0.3.2"
 
 CLASS_RULES = [
     ("vendored", re.compile(r"(^|/)(vendor|third_party|node_modules)/")),
@@ -44,7 +45,9 @@ FACT_SIGNALS = {
                (r"\.(js|ts)$", r"prisma|typeorm|sequelize|knex|mongoose|better-sqlite3|pg\b"),
                (r"(^|/)migrations?/", r".")],
     "has_tests": [(r"(^|/)(tests?|__tests__)/|(_test|\.test|\.spec)\.[a-z]+$|(^|/)test_[^/]+\.py$", r".")],
-    "has_ai_features": [(r"\.(py|js|ts|mjs)$", r"\b(openai|anthropic|langchain|llama_index|ollama|google\.generativeai|@anthropic-ai|mistralai|litellm|transformers)\b")],
+    "has_ai_features": [(r"\.(py|js|ts|mjs)$", r"\b(openai|anthropic|langchain|llama_index|ollama|google\.generativeai|@anthropic-ai|mistralai|litellm|transformers)\b"),
+                        # agent skills, subagents and commands are AI features too
+                        (r"(^|/)(SKILL\.md|AGENTS\.md)$|(^|/)\.claude/(agents|skills|commands)/", r".")],
     "processes_personal_data": [(r"\.(py|js|ts|sql|prisma)$", r"\b(email|e_mail|password|phone|address|birth|first_?name|last_?name|ip_address|user_?id)\b")],
     "has_docker": [(r"(^|/)Dockerfile", r".")],
     "has_ci": [(r"(^|/)(\.github/workflows/|\.gitlab-ci\.yml|\.circleci/)", r".")],
@@ -60,10 +63,14 @@ def classify(path, data):
     return "other"
 
 
-def build_inventory(root):
+def build_inventory(root, exclude=()):
     files = [f for f in git(root, "ls-files", "-z").split("\0") if f]
     inv = []
     for rel in files:
+        if any(rel == e or rel.startswith(e + "/") for e in exclude):
+            inv.append({"path": rel, "class": "excluded", "in_scope": False,
+                        "exclude_reason": "excluded by the user (--exclude)"})
+            continue
         p = root / rel
         if p.is_symlink():
             inv.append({"path": rel, "class": "symlink", "in_scope": False, "exclude_reason": "symlink"})
@@ -123,6 +130,9 @@ def main():
     ap.add_argument("--allow-dirty", action="store_true",
                     help="audit even if tracked files have uncommitted changes (the report then says the "
                          "audited state is NOT the recorded commit)")
+    ap.add_argument("--exclude", action="append", default=[], metavar="PATH",
+                    help="leave a repo-relative folder or file out of the audit, e.g. a test fixture or "
+                         "a deliberately vulnerable demo app; listed in the report")
     ap.add_argument("--fact", action="append", default=[], metavar="NAME=yes|no",
                     help="override a detected fact, e.g. --fact processes_personal_data=yes")
     a = ap.parse_args()
@@ -133,6 +143,19 @@ def main():
     if dirty and not a.allow_dirty:
         die("the working tree has uncommitted changes to tracked files, so the audit would not match the "
             "commit. Commit or stash them, or run again with --allow-dirty.\n" + dirty[:2000])
+    skip = []
+    for e in a.exclude:
+        e = e.strip().rstrip("/")
+        while e.startswith("./"):
+            e = e[2:]
+        if not e or e.startswith("/") or ".." in Path(e).parts:
+            die(f"bad --exclude {e!r}: give a path relative to the repository root")
+        skip.append(e)
+    inv = build_inventory(root, skip)
+    unmatched = [e for e in skip if not any(f["class"] == "excluded" and (f["path"] == e or f["path"].startswith(e + "/"))
+                                            for f in inv)]
+    if unmatched:
+        die(f"--exclude matches no tracked file: {', '.join(unmatched)}")
     now = dt.datetime.now(dt.timezone.utc)
     run_id = now.strftime("%Y%m%d-%H%M%S") + "-" + commit[:7]
     run_dir, n = root / ".audit" / run_id, 1
@@ -157,7 +180,6 @@ def main():
     elif a.allow_exec_unsandboxed:
         exec_mode = "unsandboxed"
 
-    inv = build_inventory(root)
     facts = detect_facts(root, inv)
     for ov in a.fact:
         name, _, val = ov.partition("=")
@@ -198,6 +220,7 @@ def main():
         "started_at": now.isoformat(timespec="seconds"), "exec_mode": exec_mode,
         "sandbox_available": sandbox_available(),
         "extra_checklists": [str(p) for p in extra],
+        "exclude": skip,
     }
     write_json(run_dir / "run.json", run)
     write_json(run_dir / "inventory.json", inv)
@@ -207,7 +230,8 @@ def main():
     in_scope = sum(1 for f in inv if f.get("in_scope"))
     print(f"run folder: {run_dir}")
     print(f"commit {commit[:12]}{' (working tree has uncommitted changes)' if dirty else ''}")
-    print(f"files: {len(inv)} total, {in_scope} in scope")
+    print(f"files: {len(inv)} total, {in_scope} in scope"
+          + (f" (excluded by --exclude: {', '.join(skip)})" if skip else ""))
     print("facts: " + ", ".join(f"{k}={'yes' if v['value'] else 'no'}" for k, v in facts.items() if k != "always"))
     by_pass = {}
     for it in applicable:

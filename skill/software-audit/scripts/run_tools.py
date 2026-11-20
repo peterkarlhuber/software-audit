@@ -65,10 +65,24 @@ def has(inv, rx):
     return [f["path"] for f in inv if f.get("in_scope") and re.search(rx, f["path"])]
 
 
+EXCLUDE = []  # repo-relative path prefixes excluded with prepare.py --exclude
+
+
+def excluded(path):
+    p = str(path or "")
+    while p.startswith("./"):
+        p = p[2:]
+    return any(p == e or p.startswith(e + "/") for e in EXCLUDE)
+
+
 def record(tools_dir, group, **kw):
     findings = kw.pop("findings", None)
     data = {"group": group, **kw}
     if findings is not None:
+        dropped = [f for f in findings if excluded(f.get("file"))]
+        if dropped:
+            findings = [f for f in findings if not excluded(f.get("file"))]
+            data["excluded_findings"] = len(dropped)
         for i, f in enumerate(findings, 1):
             f["tool_id"] = f"T-{group}-{i:03d}"
         data["finding_count"] = len(findings)
@@ -245,6 +259,8 @@ def sbom(root, tools_dir, inv):
         return missing(tools_dir, "sbom", ["syft"])
     out = tools_dir / "sbom.cdx.json"
     cmd = ["syft", f"dir:{root}", "-o", f"cyclonedx-json={out}", "-q"]
+    for e in EXCLUDE:
+        cmd += ["--exclude", f"./{e}/**"]
     code, so, se = run(cmd, root)
     if code != 0 or not out.exists():
         return record(tools_dir, "sbom", status="error", tool="syft", command=cmd, exit_code=code, note=(se or so)[-2000:])
@@ -295,9 +311,14 @@ def lint(root, tools_dir, inv):
             cmds.append(cmd)
             ran = True
             save_raw(tools_dir, "lint.tsc.txt", so + se)
-            for m in re.finditer(r"^(.+?)\((\d+),\d+\): error (TS\d+): (.+)$", so, re.M):
+            errs = list(re.finditer(r"^(.+?)\((\d+),\d+\): error (TS\d+): (.+)$", so, re.M))
+            for m in errs:
                 fnd.append({"tool": "tsc", "rule": m.group(3), "file": m.group(1), "line": int(m.group(2)),
                             "message": m.group(4), "severity": "low"})
+            if code != 0 and not errs:
+                # tsc exits non-zero on type errors; without parsable errors it did not check anything
+                return record(tools_dir, "lint", status="error", tool="ruff/tsc", command=cmds, exit_code=code,
+                              note="tsc failed: " + (se or so).strip()[-500:])
         else:
             notes.append("tsc not installed")
     if not ran:
@@ -316,7 +337,14 @@ def container(root, tools_dir, inv):
         cmd = ["hadolint", "--format", "json", "--no-fail", str(root / d)]
         code, so, se = run(cmd, root)
         cmds.append(cmd)
-        for x in json.loads(so or "[]"):
+        try:
+            out = json.loads(so)
+        except ValueError:
+            out = None
+        if code != 0 or not isinstance(out, list):
+            return record(tools_dir, "container", status="error", tool="hadolint", command=cmds, exit_code=code,
+                          version=version("hadolint"), note=f"hadolint failed on {d}: " + (se or so).strip()[-500:])
+        for x in out:
             fnd.append({"tool": "hadolint", "rule": x.get("code"), "file": d, "line": x.get("line"),
                         "message": x.get("message"), "severity": {"error": "medium", "warning": "low"}.get(x.get("level"), "low")})
     return record(tools_dir, "container", status="ran", tool="hadolint", command=cmds, version=version("hadolint"),
@@ -336,7 +364,8 @@ def tests(root, tools_dir, inv, run_meta):
         return record(tools_dir, "tests", status="not_applicable", tool="-", note="no test suite found")
     results = []
     if py_tests:
-        results.append(("pytest", ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider"]))
+        results.append(("pytest", ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+                        + [f"--ignore={e}" for e in EXCLUDE]))
     if js_test:
         results.append(("npm test", ["npm", "test", "--silent"]))
     outs, status, codes = [], "ok", []
@@ -372,6 +401,7 @@ def main():
     run_meta = read_json(rd / "run.json")
     root = Path(run_meta["repo"])
     inv = read_json(rd / "inventory.json")
+    EXCLUDE[:] = run_meta.get("exclude", [])
     tools_dir = rd / "tools"
     tools_dir.mkdir(exist_ok=True)
     summary = []

@@ -11,14 +11,16 @@ Reads items.json, tools/, tests/ and passes/*.json (written by the agent) and en
     must actually have been opened. Otherwise PASS -> UNKNOWN.
   - FAIL needs at least one finding with valid evidence, otherwise -> UNKNOWN
   - every quote must exist in the cited file near the cited lines
-  - critical/high findings are "confirmed" only by a reproduced test (run_test.py) or a
-    triaged tool finding; otherwise "unconfirmed"
+  - critical/high findings are "confirmed" only by a reproduced test (run_test.py);
+    backed only by a tool finding triaged as real they are "tool_reported"; otherwise "unconfirmed"
   - every tool finding must be triaged
 The agent never sets a finding's status; this script does.
 """
 import argparse
 import datetime as dt
+import fnmatch
 import json
+import os
 import re
 import shlex
 import sys
@@ -36,6 +38,8 @@ DISCLAIMER = (
 MIN_QUOTE_CHARS = 12
 MIN_COMPLETENESS = 30
 READ_CMDS = {"cat", "head", "tail", "sed", "less", "more", "nl", "awk", "bat", "view"}
+SHELL_OPS = {";", "|", "||", "&", "&&", "(", ")", ";;", "|&"}
+SHELL_KEYWORDS = {"do", "then", "else", "elif", "{", "!", "time"}
 
 
 def norm(s):
@@ -76,6 +80,8 @@ def check_quote(repo, file, lines, quote):
         return False, "no file given", None
     if file not in repo.inv:
         return False, f"file {file} is not in the inventory", None
+    if repo.inv[file].get("class") == "excluded":
+        return False, f"file {file} was excluded from this audit (--exclude)", None
     content = repo.lines(file)
     if content is None:
         return False, f"file {file} cannot be read", None
@@ -135,15 +141,30 @@ def schema_errors(doc):
 
 # ---------------------------------------------------------------- transcripts
 
-def find_transcripts(repo_root, started, explicit):
+def find_transcripts(repo_root, started, explicit, base=None):
+    """Session logs written since the run started. First the Claude Code project folder of the
+    repository; if the session was started elsewhere (e.g. in a parent folder), any recent log
+    that mentions the repository path."""
     if explicit:
         p = Path(explicit).expanduser()
         return sorted(p.rglob("*.jsonl")) if p.is_dir() else [p]
-    base = Path.home() / ".claude" / "projects"
-    slug = re.sub(r"[^A-Za-z0-9]", "-", str(repo_root))
-    cands = [d for d in base.glob("*") if d.is_dir() and d.name == slug] if base.exists() else []
+    base = Path(base) if base else Path.home() / ".claude" / "projects"
+    if not base.exists():
+        return []
     t0 = started.timestamp() - 60
-    return sorted(f for d in cands for f in d.rglob("*.jsonl") if f.stat().st_mtime >= t0)
+    slug = re.sub(r"[^A-Za-z0-9]", "-", str(repo_root))
+    own = [f for f in (base / slug).rglob("*.jsonl") if f.stat().st_mtime >= t0] if (base / slug).is_dir() else []
+    if own:
+        return sorted(own)
+    needle = str(repo_root).encode()
+    found = []
+    for f in base.rglob("*.jsonl"):
+        try:
+            if f.stat().st_mtime >= t0 and needle in f.read_bytes():
+                found.append(f)
+        except OSError:
+            continue
+    return sorted(found)
 
 
 def walk_tool_uses(obj):
@@ -157,22 +178,87 @@ def walk_tool_uses(obj):
             yield from walk_tool_uses(v)
 
 
-def opened_files(transcripts, repo):
-    opened, touched = set(), set()
-    root = str(repo.root)
+def split_shell(command):
+    """Split a shell command into simple commands (lists of words). Best effort, no execution."""
+    lex = shlex.shlex(command.replace("\n", " ; "), posix=True, punctuation_chars=";&|()")
+    lex.whitespace_split = True
+    try:
+        toks = list(lex)
+    except ValueError:
+        return []
+    segs, cur = [], []
+    for t in toks:
+        if t in SHELL_OPS:
+            if cur:
+                segs.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    if cur:
+        segs.append(cur)
+    out = []
+    for seg in segs:
+        while seg and seg[0] in SHELL_KEYWORDS:
+            seg = seg[1:]
+        if seg and seg[0] not in ("done", "fi", "}"):
+            out.append(seg)
+    return out
 
-    def rel(p):
-        p = str(p)
-        if p.startswith(root + "/"):
-            p = p[len(root) + 1:]
-        p = p.lstrip("./") if p.startswith("./") else p
-        return p
 
-    for t in transcripts:
+class ReadTracker:
+    """Which repository files a session opened. Follows `cd`, shell `for` loops and globs."""
+
+    def __init__(self, repo):
+        self.repo = repo
+        self.root = os.path.normpath(str(repo.root))
+        self.opened, self.touched = set(), set()
+
+    def rel(self, p, cwd=None):
+        p = os.path.expanduser(str(p))
+        if not os.path.isabs(p):
+            p = os.path.join(cwd or self.root, p)
+        p = os.path.normpath(p)
+        return p[len(self.root) + 1:] if p.startswith(self.root + os.sep) else None
+
+    def files_for(self, word, cwd):
+        if any(c in word for c in "*?["):
+            pat = os.path.normpath(os.path.join(cwd or self.root, word))
+            depth = pat.count(os.sep)
+            return [k for k in self.repo.inv
+                    if (os.path.join(self.root, k)).count(os.sep) == depth and fnmatch.fnmatchcase(os.path.join(self.root, k), pat)]
+        r = self.rel(word, cwd)
+        return [r] if r in self.repo.inv else []
+
+    def bash(self, command, cwd):
+        loops = {}
+        for seg in split_shell(command):
+            if seg[0] == "cd":
+                cwd = os.path.normpath(os.path.join(cwd or self.root, os.path.expanduser(seg[1]))) if len(seg) > 1 else None
+                continue
+            if seg[0] == "for" and len(seg) >= 3 and seg[2] == "in":
+                words = []
+                for w in seg[3:]:
+                    words += self.files_for(w, cwd) if any(c in w for c in "*?[") else [w]
+                loops[seg[1]] = words
+                continue
+            reading = False
+            for w in seg:
+                if not reading:
+                    reading = Path(w).name in READ_CMDS
+                    continue
+                m = re.fullmatch(r"\$\{?(\w+)\}?", w)
+                words = loops.get(m.group(1), []) if m else [w]
+                for x in words:
+                    for f in self.files_for(x, cwd):
+                        self.opened.add(f)
+        return cwd
+
+    def transcript(self, path):
+        cwd = None
         try:
-            fh = open(t, encoding="utf-8", errors="ignore")
+            fh = open(path, encoding="utf-8", errors="ignore")
         except OSError:
-            continue
+            return
         with fh:
             for line in fh:
                 try:
@@ -181,31 +267,22 @@ def opened_files(transcripts, repo):
                     continue
                 for name, inp in walk_tool_uses(obj):
                     if name in ("Read", "View", "read_file"):
-                        r = rel(inp.get("file_path") or inp.get("path") or "")
-                        if r in repo.inv:
-                            opened.add(r)
+                        r = self.rel(inp.get("file_path") or inp.get("path") or "")
+                        if r in self.repo.inv:
+                            self.opened.add(r)
                     elif name in ("Grep", "Glob"):
-                        r = rel(inp.get("path") or "")
+                        r = self.rel(inp.get("path") or "")
                         if r:
-                            touched.add(r)
+                            self.touched.add(r)
                     elif name == "Bash":
-                        try:
-                            toks = shlex.split(inp.get("command", ""))
-                        except ValueError:
-                            continue
-                        reading = False
-                        for tok in toks:
-                            if tok in ("|", "&&", ";", "||"):
-                                reading = False
-                                continue
-                            if Path(tok).name in READ_CMDS:
-                                reading = True
-                                continue
-                            if reading:
-                                r = rel(tok)
-                                if r in repo.inv:
-                                    opened.add(r)
-    return opened, touched
+                        cwd = self.bash(inp.get("command", ""), cwd)
+
+
+def opened_files(transcripts, repo):
+    t = ReadTracker(repo)
+    for p in transcripts:
+        t.transcript(p)
+    return t.opened, t.touched
 
 
 # ---------------------------------------------------------------- main checks
@@ -258,6 +335,10 @@ def main():
     started = dt.datetime.fromisoformat(run["started_at"])
     transcripts = [] if a.no_transcripts else find_transcripts(repo.root, started, a.transcripts)
     coverage_measured = bool(transcripts)
+    if not transcripts and not a.no_transcripts:
+        problems.append("coverage not measured: no session log found, so the check that cited files were opened "
+                        "was skipped. Run check_run.py again with --transcripts PATH (the Claude Code session log "
+                        "folder, usually ~/.claude/projects/<folder>/) or with --no-transcripts to accept this.")
     opened, touched = opened_files(transcripts, repo) if transcripts else (set(), set())
 
     # ---- findings
@@ -289,16 +370,19 @@ def main():
                 status = "confirmed"
                 notes.append("reproduced by test")
             elif tool_ok:
-                status = "confirmed"
-                notes.append(f"reported by tool ({', '.join(tool_ok)})")
+                status = "tool_reported"
+                notes.append(f"reported by tool ({', '.join(tool_ok)}), not reproduced by a test")
             elif test and test.get("outcome") == "not_reproduced":
                 status = "not_reproduced"
                 notes.append("test passed: defect not reproduced")
             else:
                 status = "unconfirmed"
                 notes.append("no reproducing test" + (f" (test {test.get('outcome')}: {test.get('reason') or 'see log'})" if test else ""))
-        else:
+        elif evid_ok:
             status = "evidenced"
+        else:
+            status = "tool_reported"
+            notes.append(f"quote not verified; backed only by tool ({', '.join(tool_ok)})")
         f["status"] = status
         f["check_notes"] = notes
         if f.get("checklist_id") not in applicable:
@@ -338,6 +422,14 @@ def main():
             if not examined:
                 down.append("no examined files listed")
             unknown_paths = [e for e in examined if not (repo.known(e) or (rd / e).exists())]
+            # a folder counts as all in-scope files inside it; each of them must have been opened
+            examined_files = []
+            for e in examined:
+                if e in repo.inv:
+                    examined_files.append(e)
+                elif repo.known(e):
+                    examined_files += [k for k, v in repo.inv.items()
+                                       if k.startswith(e.rstrip("/") + "/") and v.get("in_scope")]
             if unknown_paths:
                 down.append(f"examined paths not in inventory: {', '.join(unknown_paths[:5])}")
             if len(r.get("completeness", "")) < MIN_COMPLETENESS:
@@ -354,9 +446,10 @@ def main():
                     if open_:
                         down.append(f"{len(open_)} tool findings not triaged as false positive")
             if coverage_measured:
-                not_opened = [e for e in examined if e in repo.inv and e not in opened]
+                not_opened = [e for e in examined_files if e not in opened]
                 if not_opened:
-                    down.append(f"examined files never opened: {', '.join(not_opened[:5])}")
+                    down.append(f"examined files never opened: {', '.join(not_opened[:5])}"
+                                + (f" and {len(not_opened) - 5} more" if len(not_opened) > 5 else ""))
             if down:
                 res = "UNKNOWN"
                 reason = "PASS not accepted: " + "; ".join(down)
@@ -407,7 +500,8 @@ def main():
 
     tot = {k: sum(v[k] for v in summary.values()) for k in RESULTS}
     print(f"items: {tot}")
-    print(f"findings: {len(findings)} ({sum(1 for f in findings.values() if f['status'] == 'confirmed')} confirmed)")
+    print(f"findings: {len(findings)} ({sum(1 for f in findings.values() if f['status'] == 'confirmed')} confirmed by test, "
+          f"{sum(1 for f in findings.values() if f['status'] == 'tool_reported')} tool-reported)")
     print(f"untriaged tool findings: {len(untriaged)}; problems: {len(problems)}")
     print(f"coverage: {'measured' if coverage_measured else 'not measured'}"
           + (f", {coverage['code_opened']}/{coverage['code_files']} code files opened" if coverage_measured else ""))
@@ -426,6 +520,10 @@ def render(o):
     L.append("")
     L.append(f"Commit `{run['commit']}` · run `{run['run_id']}` · skill {run['skill_version']} · checked {o['checked_at']}")
     L.append("")
+    if run.get("exclude"):
+        L.append("> **Excluded by the user:** " + ", ".join(f"`{e}`" for e in run["exclude"])
+                 + ". These paths were not audited and tool findings in them were dropped.")
+        L.append("")
     if run.get("dirty"):
         L.append("> **Warning: the audited files are NOT identical to this commit.** Uncommitted changes were present "
                  "(started with --allow-dirty): " + ", ".join(f"`{d[3:]}`" for d in run.get("dirty_files", [])[:20]))
@@ -455,11 +553,13 @@ def render(o):
     if cov["measured"]:
         L.append(f"Coverage: {cov['code_opened']} of {cov['code_files']} code files were opened by the agent (from the session log).")
     else:
-        L.append("Coverage: **not measured** (no session log found). Examined files are as stated by the agent.")
+        L.append("Coverage: **not measured** (no session log). The check that cited files were actually opened was "
+                 "skipped; examined files are as stated by the agent.")
     L.append("")
     L.append("## 2. Findings")
     L.append("")
-    L.append("Status: `confirmed` = reproduced by a test or reported by a tool · `evidenced` = shown by a verified code quote · "
+    L.append("Status: `confirmed` = reproduced by a test · `tool_reported` = reported by a tool and triaged as real, "
+             "no test · `evidenced` = shown by a verified code quote · "
              "`unconfirmed` = critical/high without a reproducing test · `not_reproduced` = test passed · "
              "`invalid_evidence` = quote or file could not be verified")
     L.append("")

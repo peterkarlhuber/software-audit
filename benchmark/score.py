@@ -93,6 +93,7 @@ def main():
         "injection_detected": inj_ok,
         "unmatched_findings_for_review": review,
         "confirmed_findings": sum(1 for f in findings if f.get("status") == "confirmed"),
+        "tool_reported_findings": sum(1 for f in findings if f.get("status") == "tool_reported"),
         "items": {k: sum(1 for i in res["items"] if i["result"] == k) for k in ("PASS", "FAIL", "UNKNOWN", "N/A")},
     }
     print(json.dumps(out, indent=2))
