@@ -21,6 +21,7 @@ You get one claimed defect: its ID, file, lines and a one-sentence claim. You di
    ```bash
    python3 RUN_TEST RUN <ID> --target <FILE>:<LINES> --file RUN/tests/<ID>/test_x.py:tests/test_audit_x.py -- python3 -m pytest -q tests/test_audit_x.py
    ```
+   If `RUN/run.json` has `workspace_venv` (dependencies were installed by `install_deps.py`), use that interpreter instead of `python3`: `{work}/.audit-venv/bin/python -m pytest ...` (`{work}` is replaced by the copy's root). The command always starts in the repository root; give test paths relative to it.
    `--target` is the finding's file and lines. For pytest, `run_test.py` checks that the failure is an `AssertionError` with the marker inside the test body (not in setup or imports), and that the cited lines were actually executed. For other test runners this cannot be checked, so the best possible outcome is `reproduced_unverified`, which does not confirm the finding. Prefer pytest where the code is Python.
 5. Read `RUN/tests/<ID>.json` (`outcome`, `reason`) and `RUN/tests/<ID>.log`.
    - `reproduced`: done.

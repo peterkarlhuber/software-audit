@@ -1,4 +1,4 @@
-# Software Audit – Specification v0.3.3
+# Software Audit – Specification v0.3.4
 
 ## 1. Goal
 
@@ -19,6 +19,7 @@ The research in [research.md](research.md) shows that the leading systems share 
 | Confirm instructions | `skill/software-audit/references/confirm.md` | How a critical/high finding is confirmed with a test |
 | Checklists | `skill/software-audit/checklists/*.yaml` | 50 items: what to check, how, what counts as evidence |
 | `prepare.py` | `skill/software-audit/scripts/` | Pin commit, inventory, detect facts, select applicable items |
+| `install_deps.py` | same | Optional: install dependencies into a workspace copy so tests can run |
 | `run_tools.py` | same | Run Gitleaks, Semgrep, OSV-Scanner/Trivy, Syft, Ruff/tsc, Hadolint, tests |
 | `run_test.py` | same | Run a confirming test in a sandboxed copy of the repo and check that it is a real reproduction |
 | `audit_pytest_plugin.py` | same | Loaded by `run_test.py`: records failures and which cited lines ran |
@@ -31,9 +32,10 @@ The agent works through the checklist in three passes: functionality and operati
 ## 3. Procedure
 
 1. **Prepare** (`prepare.py`). Records the full commit SHA. If tracked files have uncommitted changes, it stops, because the audit would not match the commit. `--allow-dirty` overrides this; the run is then marked and the report starts with a warning. Lists every tracked file with hash, line count and class. Generated, vendored and binary files are listed as excluded, with the reason. The user can leave further paths out with `--exclude PATH` (for example a test fixture or a deliberately vulnerable demo app); excluded paths do not count for facts, tool findings in them are dropped, quotes from them are rejected, and the report lists them. Detects facts from code signals: `has_api`, `has_ui`, `has_db`, `has_tests`, `has_ai_features` (AI SDK imports, or agent skills such as `SKILL.md`), `processes_personal_data`, `has_docker`, `has_ci`. These facts decide which items apply. A wrong fact can be overridden with `--fact NAME=yes|no`, and the override is recorded. Output goes to `.audit/<run_id>/` inside the audited repo, which is excluded from Git.
-2. **Tools** (`run_tools.py`). Runs every tool that fits the stack and stores the raw output. Semgrep always runs the bundled rules, plus `p/default` (or `$AUDIT_SEMGREP_CONFIG`) when reachable. The dependency scan tries, in order: OSV-Scanner online, OSV-Scanner with a downloaded offline database, a cached offline database, pip-audit against PyPI, Trivy. The note in `tools/deps.json` says which one produced the result. Tool findings are normalised and get IDs (`T-sast-004`). A missing or failing tool is recorded; a tool that exits with an error or produces unreadable output is never recorded as a clean run. Checklist items that depend on it can then not be `PASS`.
+1b. **Dependencies** (`install_deps.py`, only with `--allow-exec`). Copies the tracked files (never untracked ones such as `.env`) to `RUN/workspace` and installs dependencies there: `npm ci` / `pnpm` / `yarn` from the lockfile, and one Python venv with pytest, the dev/test requirements, the lock file, `requirements.txt` and the project itself. It runs inside bubblewrap as an ordinary user, with network access (proxy and CA settings only, no credentials). Electron, browser and similar binary downloads are skipped. The repository itself is not changed. Results go to `RUN/deps.json`; tests and confirming tests then run from the workspace, and `tsc` type-checks it.
+2. **Tools** (`run_tools.py`). Runs every tool that fits the stack and stores the raw output. Semgrep always runs the bundled rules, plus `p/default` (or `$AUDIT_SEMGREP_CONFIG`) when reachable. The dependency scan tries, in order: OSV-Scanner online, OSV-Scanner with a downloaded offline database, a cached offline database, pip-audit against PyPI, Trivy. The note in `tools/deps.json` says which one produced the result. Tool findings are normalised and get IDs (`T-sast-004`). Tests and type checks are monorepo-aware: pytest runs once per Python project folder that holds tests (`pyproject.toml`, `setup.py`, `pytest.ini`, …), `npm test` once per `package.json` with a test script that no parent package covers, and `tsc` once per `tsconfig.json`. Syft skips installed dependency folders (`node_modules`, virtualenvs) and CI actions. A missing or failing tool is recorded; a tool that exits with an error or produces unreadable output is never recorded as a clean run. Checklist items that depend on it can then not be `PASS`.
 3. **Passes** (subagents with `pass.md`). For every applicable item, the agent writes a result, the files it examined, how it made sure nothing was missed, and exact quotes as evidence. For each problem it writes a finding. It triages every tool finding of its pass as `real` or `false_positive`, with a reason.
-4. **Confirm** (subagents with `confirm.md`). For each critical or high finding, a fresh subagent sees only the location and the claim. It writes a test that must fail because of the defect, with the marker `AUDIT_CONFIRM:<id>` in the failing assertion. `run_test.py` runs it in a bubblewrap sandbox on a throwaway copy, with no network and an empty environment. The marker alone is not enough (see section 4).
+4. **Confirm** (subagents with `confirm.md`). `check_run.py` writes `confirm_queue.json`: each critical or high finding, and each finding whose checklist item defaults to critical or high even when the pass agent lowered its severity. For each entry, a fresh subagent sees only the location and the claim. It writes a test that must fail because of the defect, with the marker `AUDIT_CONFIRM:<id>` in the failing assertion. `run_test.py` runs it in a bubblewrap sandbox on a throwaway copy, with no network and an empty environment. The marker alone is not enough (see section 4).
 5. **Check** (`check_run.py`). Applies the rules in section 4 and writes `results.json` and `report.md`.
 6. **Deliver.** The skill tells the user the report path, the counts, the main risks and what was not checked.
 
@@ -65,6 +67,7 @@ The agent never sets final results or finding statuses. The script does.
   - if the session log is available: every examined file was actually opened
 - `FAIL` requires at least one finding with valid evidence. Otherwise it becomes `UNKNOWN`.
 - `N/A` requires a reason.
+- A `PASS` rejected because examined files were never opened is also listed as a problem, so the one fix-up round can open them, remove them from `examined` or change the result.
 
 `PASS` is an evidence-backed audit judgement, not a proof. The rules make sure it rests on opened files, verified quotes and clean tool results, but a completeness statement cannot prove that nothing was missed.
 
@@ -76,7 +79,7 @@ The agent never sets final results or finding statuses. The script does.
 |---|---|
 | `confirmed` | Critical/high finding reproduced by a test (`run_test.py` outcome `reproduced`) |
 | `tool_reported` | Finding backed by a tool finding triaged as real, but not reproduced by a test (for medium/low: the quote could not be verified, the tool finding carries it) |
-| `unconfirmed` | Critical/high finding without a reproducing test. It is shown explicitly as unconfirmed. |
+| `unconfirmed` | Critical/high finding (or one lowered by the agent from a critical/high checklist default) without a reproducing test. It is shown explicitly as unconfirmed, with the checklist default next to the severity. |
 | `not_reproduced` | The confirming test passed. The finding stays in the report. |
 | `evidenced` | Medium/low finding with a verified quote |
 | `invalid_evidence` | Quote or file could not be verified, or the cited file was never opened |
@@ -144,13 +147,25 @@ v0.3.x replaces the v2.5 skill under the same name, `software-audit`.
 - bubblewrap (Linux) for running tests and confirming findings
 - Offline: Semgrep runs the bundled rules without network; set `AUDIT_SEMGREP_CONFIG=none` to skip the online ruleset or point it to a local rules folder. The dependency scan needs either osv.dev, a one-time download of the OSV offline database, or PyPI (pip-audit).
 
-## 10. Changes in v0.3.3
+## 10. Changes in v0.3.4
+
+From the first real audit (Levuvo Mail, a Node/Electron + Python monorepo):
+- Lowering a severity no longer skips the confirmation test: findings of items that default to critical/high are queued in `confirm_queue.json`, stay `unconfirmed` without a test, and the report shows the checklist default.
+- New optional step 1b `install_deps.py`: dependencies are installed into a sandboxed workspace copy, so tests and confirmations work for JS and Python projects with dependencies. Sandboxed commands now run as an ordinary user.
+- PASS results rejected for unopened examined files are listed as problems and get the fix-up round; `pass.md` states that every examined file must be opened.
+- Monorepos: pytest and `npm test` per project root, `tsc` per `tsconfig.json`, readable summary for `node --test`.
+- `has_db` and other facts also detect `.mjs`/`.cjs`/`.jsx` files (e.g. `better-sqlite3` in `.mjs`).
+- Syft no longer scans `node_modules`/virtualenvs or CI actions (Levuvo Mail: 513 → 68 licence-review findings).
+- Dependency advisories: `pass.md` now says a known vulnerability in a declared dependency is `real` even if the vulnerable code looks unused; reachability may only lower the severity. (In the first v0.3.4 benchmark run the security pass dismissed the PyYAML CVE as "never imported" and missed B11.)
+- Still open by design: coverage on large repositories (Levuvo Mail: 97 of 503 code files opened); splitting a pass over several agents would make the procedure more complex.
+
+## 11. Changes in v0.3.3
 
 - Change audits: `prepare.py --base REF`, tool findings and coverage limited to the change, `in_change` on findings (section 3).
 - Several repositories in one request: `summarize.py` overview.
 - Second benchmark `benchmark/change/` for change audits: a branch that drops an ownership check (must be found) and adds a correct endpoint (decoy).
 
-## 11. Changes in v0.3.2
+## 12. Changes in v0.3.2
 
 From the first real audit (the repository auditing itself):
 - `run_test.py`: constant comparisons such as `assert 1 == 2` are rejected like `assert False`.
@@ -160,7 +175,7 @@ From the first real audit (the repository auditing itself):
 - `prepare.py --exclude PATH`; skill files (`SKILL.md`, `.claude/agents|skills|commands`) count as AI features.
 - Checklists: OPS-CI-01 applies always, so a repository without CI fails it instead of N/A; new SEC-EXEC-01 for running untrusted code, commands and data without isolation (50 items).
 
-## 12. Changes in v0.3.1
+## 13. Changes in v0.3.1
 
 - `run_test.py`: a failing test with the marker is no longer enough. Trivial assertions are rejected; for pytest the failure must be the marked assertion in the test body and the cited lines must have run.
 - `prepare.py`: stops on uncommitted changes unless `--allow-dirty` is given.

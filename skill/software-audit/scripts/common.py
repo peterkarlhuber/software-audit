@@ -21,6 +21,10 @@ RESULTS = ["PASS", "FAIL", "UNKNOWN", "N/A"]
 # Environment variables that are kept when repo code runs. Everything else
 # (tokens, cloud credentials, SSH agent) is dropped.
 SAFE_ENV = {"PATH", "LANG", "LC_ALL", "TERM", "TZ"}
+# Only for dependency installation (install_deps.py): proxy and CA settings, never credentials.
+NETWORK_ENV = {"HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy", "npm_config_https_proxy",
+               "npm_config_noproxy", "YARN_HTTPS_PROXY", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS",
+               "PIP_CERT", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "npm_config_cafile"}
 
 
 def in_change(change, file, lines=None, margin=3):
@@ -139,26 +143,46 @@ def sandbox_available():
     return shutil.which("bwrap") is not None
 
 
-def sandboxed_cmd(argv, workdir, network=False):
+def sandboxed_cmd(argv, workdir, network=False, subdir="", ro_files=()):
     """Wrap argv with bubblewrap: read-only system, writable copy of the repo,
-    empty home, no network by default."""
+    empty home, no network by default. subdir: working directory inside the copy.
+    ro_files: extra host files made visible read-only at the same path (e.g. a CA bundle)."""
     bw = ["bwrap", "--die-with-parent", "--unshare-all", "--new-session",
           "--ro-bind", "/usr", "/usr", "--ro-bind", "/etc", "/etc",
           "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
           "--tmpfs", "/home", "--setenv", "HOME", "/home/audit",
-          "--bind", str(workdir), "/work", "--chdir", "/work"]
+          # run as an ordinary user: tools that think they are root try to chown extracted
+          # files, which fails inside the user namespace
+          "--uid", "1000", "--gid", "1000",
+          "--bind", str(workdir), "/work", "--chdir", "/work/" + subdir.strip("/") if subdir else "/work"]
     for d in ("/bin", "/lib", "/lib64", "/lib32", "/opt", "/usr/local"):
         if os.path.exists(d) and not os.path.islink(d):
             bw += ["--ro-bind", d, d]
         elif os.path.islink(d):
             bw += ["--symlink", os.readlink(d), d]
+    for f in ro_files:
+        bw += ["--ro-bind", str(f), str(f)]
     if network:
         bw += ["--share-net"]
     return bw + ["--"] + list(argv)
 
 
-def run_repo_code(argv, repo, run, timeout=900, extra_files=None, extra_env=None, collect=None):
-    """Run repo code (tests, builds) in a throwaway copy of the repo.
+def exec_source(repo, run):
+    """The tree that repo code runs from: the dependency workspace made by
+    install_deps.py when it exists, otherwise the repository itself."""
+    ws = run.get("workspace")
+    return Path(ws) if ws and Path(ws).is_dir() else Path(repo)
+
+
+def work_path(work, sandboxed):
+    """How the copy is seen by the command: /work in the sandbox, the real path otherwise."""
+    return "/work" if sandboxed else str(work)
+
+
+def run_repo_code(argv, repo, run, timeout=900, extra_files=None, extra_env=None, collect=None, subdir=""):
+    """Run repo code (tests, builds) in a throwaway copy of the repo (or of the dependency
+    workspace, if install_deps.py made one). "{work}" in argv is replaced by the copy's root
+    as the command sees it. subdir: repo-relative working directory.
 
     Uses bubblewrap when available. Without it, runs only if the run was
     started with --allow-exec-unsandboxed (for the user's own trusted repos),
@@ -179,7 +203,7 @@ def run_repo_code(argv, repo, run, timeout=900, extra_files=None, extra_env=None
                 "exit_code": None, "output": "", "sandbox": None}
     tmp = Path(tempfile.mkdtemp(prefix="audit-exec-"))
     work = tmp / "work"
-    shutil.copytree(repo, work, symlinks=True, ignore=shutil.ignore_patterns(".audit"))
+    shutil.copytree(exec_source(repo, run), work, symlinks=True, ignore=shutil.ignore_patterns(".audit"))
     for rel, src in (extra_files or {}).items():
         dest = work / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -188,9 +212,10 @@ def run_repo_code(argv, repo, run, timeout=900, extra_files=None, extra_env=None
     env.update(extra_env or {})
     env["HOME"] = str(tmp / "home")
     os.makedirs(env["HOME"], exist_ok=True)
-    cmd = sandboxed_cmd(argv, work) if use_bwrap else list(argv)
+    argv = [a.replace("{work}", work_path(work, use_bwrap)) for a in argv]
+    cmd = sandboxed_cmd(argv, work, subdir=subdir) if use_bwrap else list(argv)
     try:
-        r = subprocess.run(cmd, cwd=work, env=env, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, cwd=work / subdir if subdir else work, env=env, capture_output=True, text=True, timeout=timeout)
         out = (r.stdout + "\n" + r.stderr)[-200000:]
         res = {"status": "ran", "exit_code": r.returncode, "output": out, "collected": {}}
         for rel in collect or []:

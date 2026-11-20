@@ -12,7 +12,11 @@ Reads items.json, tools/, tests/ and passes/*.json (written by the agent) and en
   - FAIL needs at least one finding with valid evidence, otherwise -> UNKNOWN
   - every quote must exist in the cited file near the cited lines
   - critical/high findings are "confirmed" only by a reproduced test (run_test.py);
-    backed only by a tool finding triaged as real they are "tool_reported"; otherwise "unconfirmed"
+    backed only by a tool finding triaged as real they are "tool_reported"; otherwise "unconfirmed".
+    A finding whose checklist item defaults to critical/high needs a test too, even if the agent
+    lowered its severity. Findings that still need a test are written to confirm_queue.json.
+  - a PASS rejected because examined files were never opened is listed as a problem, so the
+    fix-up round can open them or change the result
   - every tool finding must be triaged (in a change audit: every tool finding inside the change)
   - in a change audit (prepare.py --base), findings outside the changed lines are marked as such
 The agent never sets a finding's status; this script does.
@@ -369,9 +373,16 @@ def main():
             evid_ok = False
         tool_ok = [t for t in f.get("tool_ids", []) if t in tool_findings and triage.get(t, {}).get("verdict") == "real"]
         test = read_json(rd / "tests" / f"{fid}.json")
+        default = (applicable.get(f.get("checklist_id")) or {}).get("severity_if_fail")
+        f["severity_default"] = default
+        lowered = default in SEVERITIES and SEVERITIES.index(f["severity"]) > SEVERITIES.index(default)
+        needs_test = f["severity"] in ("critical", "high") or (lowered and default in ("critical", "high"))
+        if lowered:
+            notes.append(f"severity lowered by the agent from {default} to {f['severity']}"
+                         + ("; a test is still required" if needs_test and f["severity"] not in ("critical", "high") else ""))
         if not evid_ok and not tool_ok:
             status = "invalid_evidence"
-        elif f["severity"] in ("critical", "high"):
+        elif needs_test:
             if test and test.get("outcome") == "reproduced":
                 status = "confirmed"
                 notes.append("reproduced by test")
@@ -394,6 +405,7 @@ def main():
             notes.append("location outside the changed lines")
         f["status"] = status
         f["check_notes"] = notes
+        f["needs_test"] = needs_test
         if f.get("checklist_id") not in applicable:
             problems.append(f"finding {fid} refers to unknown or not applicable item {f.get('checklist_id')}")
 
@@ -462,6 +474,10 @@ def main():
             if down:
                 res = "UNKNOWN"
                 reason = "PASS not accepted: " + "; ".join(down)
+                if not_opened_files(down):
+                    problems.append(f"{iid}: PASS not accepted because examined files were never opened. Open every "
+                                    "file listed under examined (Read or cat), or remove files that were not really "
+                                    "examined, or change the result to UNKNOWN with a reason")
         elif res == "FAIL":
             fids = [x for x in r.get("finding_ids", []) if x in findings]
             good = [x for x in fids if findings[x]["status"] not in ("invalid_evidence", "not_reproduced")]
@@ -509,6 +525,11 @@ def main():
         "coverage": coverage, "problems": problems,
     }
     write_json(rd / "results.json", out)
+    queue = [{"id": f["id"], "file": f.get("file"), "lines": f.get("lines"), "claim": f.get("title"),
+              "severity": f["severity"], "severity_default": f.get("severity_default")}
+             for f in out["findings"] if f.get("needs_test") and f["status"] == "unconfirmed"
+             and not (rd / "tests" / f"{f['id']}.json").exists()]
+    write_json(rd / "confirm_queue.json", queue)
     (rd / "report.md").write_text(render(out), encoding="utf-8")
 
     tot = {k: sum(v[k] for v in summary.values()) for k in RESULTS}
@@ -516,12 +537,18 @@ def main():
     print(f"findings: {len(findings)} ({sum(1 for f in findings.values() if f['status'] == 'confirmed')} confirmed by test, "
           f"{sum(1 for f in findings.values() if f['status'] == 'tool_reported')} tool-reported)")
     print(f"untriaged tool findings: {len(untriaged)}; problems: {len(problems)}")
+    print(f"findings that still need a confirmation test: {len(queue)}"
+          + (f" (list: {rd / 'confirm_queue.json'})" if queue else ""))
     print(f"coverage: {'measured' if coverage_measured else 'not measured'}"
           + (f", {coverage['code_opened']}/{coverage['code_files']} code files opened" if coverage_measured else ""))
     print(f"report: {rd / 'report.md'}")
 
 
 # ---------------------------------------------------------------- report
+
+def not_opened_files(down):
+    return any(d.startswith("examined files never opened") for d in down)
+
 
 def md(s):
     return str(s if s is not None else "").replace("|", "\\|").replace("\n", " ")
@@ -565,7 +592,8 @@ def render(o):
         if area not in ("functionality", "operations", "security", "governance"):
             L.append(f"| {area} | {s['PASS']} | {s['FAIL']} | {s['UNKNOWN']} | {s['N/A']} |")
     L.append("")
-    top = [f for f in o["findings"] if f["severity"] in ("critical", "high") and f["status"] != "invalid_evidence"]
+    top = [f for f in o["findings"] if (f["severity"] in ("critical", "high") or f.get("needs_test"))
+           and f["status"] != "invalid_evidence"]
     if top:
         L.append("**Top risks**")
         L.append("")
@@ -585,7 +613,7 @@ def render(o):
     L.append("")
     L.append("Status: `confirmed` = reproduced by a test · `tool_reported` = reported by a tool and triaged as real, "
              "no test · `evidenced` = shown by a verified code quote · "
-             "`unconfirmed` = critical/high without a reproducing test · `not_reproduced` = test passed · "
+             "`unconfirmed` = critical/high (or lowered from a critical/high default) without a reproducing test · `not_reproduced` = test passed · "
              "`invalid_evidence` = quote or file could not be verified")
     L.append("")
     if not o["findings"]:
@@ -593,7 +621,10 @@ def render(o):
     for f in o["findings"]:
         L.append(f"### {f.get('id')} · {md(f.get('title'))}")
         L.append("")
-        L.append(f"- Severity: **{f['severity']}** · Status: **{f['status']}** · Checklist: {f.get('checklist_id')}"
+        sev = f"**{f['severity']}**"
+        if f.get("severity_default") in SEVERITIES and f["severity"] != f["severity_default"]:
+            sev += f" (checklist default: {f['severity_default']})"
+        L.append(f"- Severity: {sev} · Status: **{f['status']}** · Checklist: {f.get('checklist_id')}"
                  + ("" if f.get("in_change", True) or not ch else " · **outside the changed lines**"))
         if f.get("file"):
             L.append(f"- Location: `{f['file']}:{f.get('lines')}`")

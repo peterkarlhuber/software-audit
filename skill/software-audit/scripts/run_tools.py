@@ -67,6 +67,8 @@ def has(inv, rx):
 
 EXCLUDE = []  # repo-relative path prefixes excluded with prepare.py --exclude
 CHANGE = {}   # run.json "change" entry in a change audit (prepare.py --base), else empty
+RUN_META = {}  # run.json of the current run
+DEP_DIRS = ("node_modules", ".venv", "venv", ".audit-venv", ".audit")
 
 
 def excluded(path):
@@ -267,12 +269,18 @@ def sbom(root, tools_dir, inv):
     cmd = ["syft", f"dir:{root}", "-o", f"cyclonedx-json={out}", "-q"]
     for e in EXCLUDE:
         cmd += ["--exclude", f"./{e}/**"]
+    # installed dependency folders and the audit folder are not part of the repository; scanning
+    # them floods the SBOM with build tools and binaries (manifests and lockfiles are enough)
+    for d in DEP_DIRS:
+        cmd += ["--exclude", f"**/{d}/**"]
     code, so, se = run(cmd, root)
     if code != 0 or not out.exists():
         return record(tools_dir, "sbom", status="error", tool="syft", command=cmd, exit_code=code, note=(se or so)[-2000:])
     doc = json.loads(out.read_text())
     licences, fnd = {}, []
     for c in doc.get("components", []):
+        if str(c.get("purl", "")).startswith("pkg:github/"):
+            continue  # CI actions are not distributed with the software
         names = []
         for l in c.get("licenses", []) or []:
             lic = l.get("license", {})
@@ -310,21 +318,37 @@ def lint(root, tools_dir, inv):
                 notes.append("ruff failed: " + (se or so)[-500:])
         else:
             notes.append("ruff not installed")
-    if ts and has(inv, r"(^|/)tsconfig\.json$"):
+    tsconfigs = [p for p in has(inv, r"(^|/)tsconfig\.json$") if "node_modules/" not in p]
+    if ts and tsconfigs:
         if shutil.which("tsc"):
-            cmd = ["tsc", "--noEmit", "--pretty", "false", "-p", str(root)]
-            code, so, se = run(cmd, root)
-            cmds.append(cmd)
-            ran = True
-            save_raw(tools_dir, "lint.tsc.txt", so + se)
-            errs = list(re.finditer(r"^(.+?)\((\d+),\d+\): error (TS\d+): (.+)$", so, re.M))
-            for m in errs:
-                fnd.append({"tool": "tsc", "rule": m.group(3), "file": m.group(1), "line": int(m.group(2)),
-                            "message": m.group(4), "severity": "low"})
-            if code != 0 and not errs:
-                # tsc exits non-zero on type errors; without parsable errors it did not check anything
-                return record(tools_dir, "lint", status="error", tool="ruff/tsc", command=cmds, exit_code=code,
-                              note="tsc failed: " + (se or so).strip()[-500:])
+            # with installed dependencies (install_deps.py) the type check sees the real types
+            base = Path(RUN_META.get("workspace") or root)
+            raw = []
+            for cfg in tsconfigs[:10]:
+                d = parent_dir(cfg)
+                cmd = ["tsc", "--noEmit", "--pretty", "false", "-p", str(base / cfg)]
+                code, so, se = run(cmd, base / d if d else base)
+                cmds.append(cmd)
+                raw.append(f"$ {' '.join(cmd)}\n{so}{se}")
+                errs = list(re.finditer(r"^(.+?)\((\d+),\d+\): error (TS\d+): (.+)$", so, re.M))
+                for m in errs:
+                    f = os.path.normpath(os.path.join(d, m.group(1)))
+                    fnd.append({"tool": "tsc", "rule": m.group(3), "file": f, "line": int(m.group(2)),
+                                "message": m.group(4), "severity": "low"})
+                if code != 0 and not errs:
+                    # tsc exits non-zero on type errors; without parsable errors it did not check anything
+                    notes.append(f"tsc failed for {cfg}: " + (se or so).strip()[-300:])
+                else:
+                    ran = True
+            save_raw(tools_dir, "lint.tsc.txt", "\n".join(raw))
+            if len(tsconfigs) > 10:
+                notes.append(f"{len(tsconfigs) - 10} more tsconfig.json files not checked")
+            if not RUN_META.get("workspace"):
+                notes.append("tsc ran without installed dependencies; missing-module errors are expected")
+            if any(n.startswith("tsc failed") for n in notes):
+                # a type check that did not run for every project is not a clean result
+                return record(tools_dir, "lint", status="error", tool="ruff/tsc", command=cmds,
+                              note="; ".join(notes))
         else:
             notes.append("tsc not installed")
     if not ran:
@@ -357,44 +381,89 @@ def container(root, tools_dir, inv):
                   findings=fnd)
 
 
-def tests(root, tools_dir, inv, run_meta):
+PY_ROOT_FILES = ("pyproject.toml", "setup.py", "setup.cfg", "pytest.ini", "tox.ini")
+MAX_TEST_RUNS = 8
+
+
+def parent_dir(path):
+    return path.rsplit("/", 1)[0] if "/" in path else ""
+
+
+def under(path, d):
+    return d == "" or path == d or path.startswith(d + "/")
+
+
+def test_roots(root, inv):
+    """Monorepo-aware: one pytest run per Python project folder that holds tests, one npm test
+    per package.json with a test script that is not covered by a parent package with one."""
     py_tests = has(inv, r"(^|/)(tests?/.*\.py|test_[^/]+\.py|[^/]+_test\.py)$")
-    pkg = root / "package.json"
-    js_test = False
-    if pkg.exists():
+    py_project_dirs = sorted({parent_dir(p) for p in has(inv, r"(^|/)(" + "|".join(re.escape(f) for f in PY_ROOT_FILES) + r")$")},
+                             key=len, reverse=True)
+    py_roots = set()
+    for t in py_tests:
+        py_roots.add(next((d for d in py_project_dirs if under(t, d)), ""))
+    js_roots = []
+    for pkg in sorted(has(inv, r"(^|/)package\.json$"), key=len):
+        if "node_modules/" in pkg:
+            continue
         try:
-            js_test = bool(json.loads(pkg.read_text()).get("scripts", {}).get("test"))
-        except ValueError:
-            pass
-    if not py_tests and not js_test:
+            if not json.loads((root / pkg).read_text()).get("scripts", {}).get("test"):
+                continue
+        except (ValueError, OSError):
+            continue
+        d = parent_dir(pkg)
+        if not any(under(d, r) for r in js_roots):
+            js_roots.append(d)
+    return sorted(py_roots), js_roots
+
+
+def tests(root, tools_dir, inv, run_meta):
+    py_roots, js_roots = test_roots(root, inv)
+    if not py_roots and not js_roots:
         return record(tools_dir, "tests", status="not_applicable", tool="-", note="no test suite found")
+    python = "{work}/" + run_meta["workspace_venv"] + "/bin/python" if run_meta.get("workspace_venv") else "python3"
     results = []
-    if py_tests:
-        results.append(("pytest", ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
-                        + [f"--ignore={e}" for e in EXCLUDE]))
-    if js_test:
-        results.append(("npm test", ["npm", "test", "--silent"]))
-    outs, status, codes = [], "ok", []
-    for name, cmd in results:
-        r = run_repo_code(cmd, root, run_meta)
+    for d in py_roots:
+        ignores = [e[len(d) + 1:] if d else e for e in EXCLUDE if under(e, d) and e != d]
+        results.append(("pytest", d, [python, "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+                        + [f"--ignore={e}" for e in ignores]))
+    for d in js_roots:
+        results.append(("npm test", d, ["npm", "test", "--silent"]))
+    skipped_runs = results[MAX_TEST_RUNS:]
+    results = results[:MAX_TEST_RUNS]
+    outs, status, codes, notes = [], "ok", [], []
+    for i, (name, d, cmd) in enumerate(results, 1):
+        r = run_repo_code(cmd, root, run_meta, subdir=d)
         if r["status"] == "skipped":
             return record(tools_dir, "tests", status="skipped", tool=name, command=cmd, note=r["reason"])
-        save_raw(tools_dir, f"tests.{name.split()[0]}.log", r["output"])
+        log = f"tests.{name.split()[0]}{'.' + str(i) if len(results) > 1 else ''}.log"
+        save_raw(tools_dir, log, r["output"])
         codes.append(r["exit_code"])
-        outs.append({"runner": name, "command": cmd, "status": r["status"], "exit_code": r["exit_code"],
-                     "sandbox": r["sandbox"], "summary": summarise(r["output"])})
+        outcome = "passed" if r["status"] == "ran" and r["exit_code"] == 0 else (
+            "failed" if r["status"] == "ran" else r["status"])
+        notes.append(f"{name} in {d or '.'}: {outcome}")
+        outs.append({"runner": name, "root": d or ".", "command": cmd, "status": r["status"], "exit_code": r["exit_code"],
+                     "sandbox": r["sandbox"], "log": f"tools/{log}", "summary": summarise(r["output"])})
         if r["status"] != "ran":
             status = "error"
         elif r["exit_code"] != 0 and status != "error":
             status = "failed"
-    data = record(tools_dir, "tests", status="ran" if status in ("ok", "failed") else "error", tool="/".join(n for n, _ in results),
-                  runs=outs, exit_code=max((c for c in codes if c is not None), default=None))
+    if skipped_runs:
+        notes.append(f"{len(skipped_runs)} more test roots not run: " + ", ".join(d or "." for _, d, _ in skipped_runs))
+    if not run_meta.get("workspace"):
+        notes.append("dependencies not installed (install_deps.py not run)")
+    data = record(tools_dir, "tests", status="ran" if status in ("ok", "failed") else "error",
+                  tool="/".join(dict.fromkeys(n for n, _, _ in results)),
+                  runs=outs, exit_code=max((c for c in codes if c is not None), default=None), note="; ".join(notes))
     data["status"] = "ok" if status == "ok" else ("findings" if status == "failed" else "error")
     write_json(tools_dir / "tests.json", data)
     return data
 
 
 def summarise(out):
+    tap = dict(re.findall(r"^# (tests|pass|fail|skipped) (\d+)$", out, re.M))  # node --test, TAP
+    if "tests" in tap:
+        return f"{tap['tests']} tests, {tap.get('pass', '?')} passed, {tap.get('fail', '?')} failed"
     lines = [l for l in out.strip().splitlines() if re.search(r"passed|failed|error|Tests?:", l, re.I)]
     return lines[-1][:300] if lines else out.strip().splitlines()[-1][:300] if out.strip() else ""
 
@@ -410,6 +479,8 @@ def main():
     EXCLUDE[:] = run_meta.get("exclude", [])
     CHANGE.clear()
     CHANGE.update(run_meta.get("change") or {})
+    RUN_META.clear()
+    RUN_META.update(run_meta)
     tools_dir = rd / "tools"
     tools_dir.mkdir(exist_ok=True)
     summary = []
