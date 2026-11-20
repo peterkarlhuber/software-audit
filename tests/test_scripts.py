@@ -732,3 +732,17 @@ def test_semgrep_errors_make_sast_incomplete(run, tmp_path, monkeypatch):
     items, _, _ = check(rd)
     assert items["SEC-SAST-01"]["result"] == "UNKNOWN"
     assert "did not run completely (incomplete)" in items["SEC-SAST-01"]["reason"]
+
+
+def test_vcs_requirements_are_not_built_without_scripts(tmp_path):
+    import install_deps
+    base = tmp_path / "ws" / "apps" / "ai"
+    base.mkdir(parents=True)
+    (base / "requirements.txt").write_text(
+        "# pinned commits\nlib @ git+https://example.org/lib.git@abc\ngit+https://example.org/b.git#egg=b\n"
+        "plain==1.0 \\\n    --hash=sha256:00\n")
+    path, skipped = install_deps.binary_only_file(tmp_path / "ws", base, "requirements.txt", "/work", "apps/ai")
+    assert skipped == ["lib", "git+https://example.org/b.git#egg=b"]
+    assert path == "/work/.audit-req/apps_ai_requirements.txt"
+    kept = (tmp_path / "ws" / ".audit-req" / "apps_ai_requirements.txt").read_text()
+    assert "git+" not in kept and "plain==1.0" in kept and "--hash=sha256:00" in kept

@@ -103,9 +103,33 @@ def requirement_entries(text):
     return entries
 
 
-def install_one_by_one(ws, sandboxed, venv_py, base, d, req, no_deps):
+DIRECT_URL = re.compile(r"(^|\s)(git|hg|svn|bzr)\+|\w+://|^file:|\s@\s*file:", re.I)
+
+
+def needs_build(entry):
+    """Direct-URL and VCS requirements are always built by pip, even with --only-binary."""
+    return bool(DIRECT_URL.search(entry.split(" --hash")[0]))
+
+
+def binary_only_file(ws, base, req, root_ref, d):
+    """Copy of a requirements file without direct-URL/VCS entries; returns (path for pip, skipped)."""
     try:
         entries = requirement_entries((base / req).read_text(errors="ignore"))
+    except OSError:
+        return req, []
+    skipped = [e.split()[0] for e in entries if needs_build(e)]
+    if not skipped:
+        return req, []
+    tmp = ws / ".audit-req"
+    tmp.mkdir(exist_ok=True)
+    name = (d.replace("/", "_") + "_" if d else "") + req
+    (tmp / name).write_text("".join(e + "\n" for e in entries if not needs_build(e)))
+    return f"{root_ref}/.audit-req/{name}", skipped
+
+
+def install_one_by_one(ws, sandboxed, venv_py, base, d, req, no_deps):
+    try:
+        entries = [e for e in requirement_entries((base / req).read_text(errors="ignore")) if not needs_build(e)]
     except OSError:
         return None
     tmp = ws / ".audit-req"
@@ -113,14 +137,13 @@ def install_one_by_one(ws, sandboxed, venv_py, base, d, req, no_deps):
     root_ref = "/work" if sandboxed else str(ws)
     missing = []
     for i, e in enumerate(entries):
-        (tmp / f"{i}.txt").write_text(e + "\n")
+        (tmp / f"one-{i}.txt").write_text(e + "\n")
         hashed = "--hash" in e
-        argv = [venv_py, "-m", "pip", "install", "-q", "--only-binary", ":all:", "-r", f"{root_ref}/.audit-req/{i}.txt"] \
+        argv = [venv_py, "-m", "pip", "install", "-q", "--only-binary", ":all:", "-r", f"{root_ref}/.audit-req/one-{i}.txt"] \
             + (["--no-deps"] if no_deps or hashed else [])
         code, _ = run_in(ws, sandboxed, argv, d)
         if code != 0:
             missing.append(e.split()[0])
-    shutil.rmtree(tmp, ignore_errors=True)
     return missing
 
 
@@ -229,17 +252,26 @@ def main():
                 locked = False
                 for req in reqs:
                     no_deps = locked and req == "requirements.txt"
-                    argv = [venv_py, "-m", "pip", "install", "-q", "-r", req] + (["--no-deps"] if no_deps else []) + pip_bin
+                    req_arg, skipped = req, []
+                    if not scripts:
+                        # --only-binary does not stop pip from building direct-URL and VCS
+                        # requirements (git+https://...), so those are left out without scripts
+                        req_arg, skipped = binary_only_file(ws, base, req, root_ref, d)
+                    argv = [venv_py, "-m", "pip", "install", "-q", "-r", req_arg] + (["--no-deps"] if no_deps else []) + pip_bin
                     code, out = run_in(ws, sandboxed, argv, d)
                     step = {"root": d or ".", "tool": "pip", "command": argv[1:], "status": "ok" if code == 0 else "failed",
                             "exit_code": code, "output_tail": out[-1500:]}
+                    if skipped:
+                        step.update(status="partial" if code == 0 else "failed",
+                                    not_installed=skipped, note="direct-URL/VCS requirements need a build "
+                                    "(install scripts); use --allow-install-scripts to install them")
                     if code != 0 and not scripts:
                         # without builds one sdist-only package fails the whole file: install the
                         # entries one by one and record which ones could not be installed
                         missing = install_one_by_one(ws, sandboxed, venv_py, base, d, req, no_deps)
                         step.update(status="partial" if missing is not None else "failed",
                                     fallback="one by one, binary wheels only",
-                                    not_installed=missing if missing is not None else None)
+                                    not_installed=(skipped + missing) if missing is not None else skipped or None)
                     steps.append(step)
                     locked = locked or (step["status"] != "failed" and "lock" in req)
                 req = bool(reqs)
@@ -251,6 +283,7 @@ def main():
                     steps.append({"root": d or ".", "tool": "pip", "command": argv[1:], "status": "ok" if code == 0 else "failed",
                                   "exit_code": code, "output_tail": out[-1500:]})
 
+    shutil.rmtree(ws / ".audit-req", ignore_errors=True)
     failed = [s for s in steps if s["status"] not in ("ok",)]
     status = "ok" if not failed else ("partial" if len(failed) < len(steps) else "failed")
     write_json(rd / "deps.json", {"status": status, "sandbox": "bubblewrap (network on)" if sandboxed else "none",
