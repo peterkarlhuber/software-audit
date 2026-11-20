@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/peterkarlhuber/software-audit/schemas/finding.schema.json",
-  "title": "Audit-Befund v3 (abwärtskompatibel zu Skill v2.5)",
+  "title": "Audit finding v3 (extends the skill v2.5 format; German v2.5 values are mapped on import, see docs/spec/04-data-formats.md section 4.9)",
   "type": "object",
   "required": [
     "schema_version",
@@ -40,7 +40,7 @@
     },
     "agent": {
       "type": "string",
-      "description": "v2.5-Feld; bei KI-Befunden eine der 12 Rollen",
+      "description": "v2.5 field; for AI findings one of the 12 roles",
       "enum": [
         "architecture",
         "code-quality",
@@ -54,7 +54,8 @@
         "api",
         "ux",
         "docs",
-        "tool"
+        "tool",
+        "verifier"
       ]
     },
     "origin": {
@@ -89,7 +90,8 @@
       "type": "string"
     },
     "file": {
-      "type": "string"
+      "type": "string",
+      "description": "Path relative to the repo root; empty for repo-wide findings"
     },
     "lines": {
       "type": "string",
@@ -106,21 +108,22 @@
       "minLength": 1
     },
     "reproduce": {
-      "type": "string"
+      "type": "string",
+      "description": "Required when evidence_type=output"
     },
     "status": {
       "enum": [
-        "bestätigt",
-        "plausibel",
-        "vermutet"
+        "confirmed",
+        "plausible",
+        "suspected"
       ]
     },
     "severity": {
       "enum": [
-        "kritisch",
-        "hoch",
-        "mittel",
-        "niedrig"
+        "critical",
+        "high",
+        "medium",
+        "low"
       ]
     },
     "title": {
@@ -188,10 +191,10 @@
     },
     "access_check": {
       "enum": [
-        "gelesen",
-        "nur_berührt",
-        "nicht_gelesen",
-        "nicht_anwendbar"
+        "read",
+        "touched_only",
+        "not_read",
+        "not_applicable"
       ]
     },
     "verification": {
@@ -202,27 +205,27 @@
       "properties": {
         "result": {
           "enum": [
-            "verifiziert",
-            "widerlegt",
-            "nicht prüfbar",
-            "nicht nachgeprüft"
+            "verified",
+            "refuted",
+            "not_verifiable",
+            "not_checked"
           ]
         },
         "method": {
           "enum": [
             "V1-test",
-            "V2-werkzeug",
-            "V3-anderes-modell",
-            "V4-gleiches-modell",
-            "V5-mensch"
+            "V2-tool",
+            "V3-other-model",
+            "V4-same-model",
+            "V5-human"
           ]
         },
         "independence": {
           "enum": [
-            "methode",
-            "modell",
-            "keine",
-            "mensch"
+            "method",
+            "model",
+            "none",
+            "human"
           ]
         },
         "verifier": {
@@ -260,8 +263,8 @@
             "properties": {
               "result": {
                 "enum": [
-                  "verifiziert",
-                  "widerlegt"
+                  "verified",
+                  "refuted"
                 ]
               }
             }
@@ -279,8 +282,8 @@
     },
     "baseline_state": {
       "enum": [
-        "neu",
-        "bekannt"
+        "new",
+        "known"
       ]
     },
     "suppressed_by": {
@@ -371,8 +374,8 @@
           },
           "access_check": {
             "enum": [
-              "nur_berührt",
-              "nicht_gelesen"
+              "touched_only",
+              "not_read"
             ]
           }
         }
@@ -380,7 +383,7 @@
       "then": {
         "properties": {
           "status": {
-            "const": "vermutet"
+            "const": "suspected"
           }
         }
       }

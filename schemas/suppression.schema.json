@@ -1,18 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/peterkarlhuber/software-audit/schemas/suppression.schema.json",
-  "title": "Liste von Suppressions (YAML, gegen dieses Schema validiert)",
+  "title": "List of suppressions (YAML, validated against this schema)",
   "type": "array",
   "items": {
     "type": "object",
     "required": [
       "id",
       "match",
-      "art",
-      "begruendung",
-      "erstellt_von",
-      "erstellt_am",
-      "gueltig_bis"
+      "kind",
+      "reason",
+      "created_by",
+      "created_at",
+      "valid_until"
     ],
     "properties": {
       "id": {
@@ -30,7 +30,7 @@
           {
             "required": [
               "rule_id",
-              "pfad_muster"
+              "path_pattern"
             ]
           }
         ],
@@ -42,40 +42,40 @@
           "rule_id": {
             "type": "string"
           },
-          "pfad_muster": {
+          "path_pattern": {
             "type": "string"
           }
         }
       },
-      "art": {
+      "kind": {
         "enum": [
           "false_positive",
-          "risiko_akzeptiert",
-          "nicht_anwendbar"
+          "risk_accepted",
+          "not_applicable"
         ]
       },
-      "begruendung": {
+      "reason": {
         "type": "string",
         "minLength": 20
       },
-      "erstellt_von": {
+      "created_by": {
         "type": "string"
       },
-      "freigegeben_von": {
+      "approved_by": {
         "type": [
           "string",
           "null"
         ]
       },
-      "erstellt_am": {
+      "created_at": {
         "type": "string",
         "format": "date"
       },
-      "gueltig_bis": {
+      "valid_until": {
         "type": "string",
         "format": "date"
       },
-      "verifikation_sha256": {
+      "verification_sha256": {
         "type": "string",
         "pattern": "^[0-9a-f]{64}$"
       }
@@ -84,14 +84,14 @@
       {
         "if": {
           "properties": {
-            "art": {
-              "const": "risiko_akzeptiert"
+            "kind": {
+              "const": "risk_accepted"
             }
           }
         },
         "then": {
           "properties": {
-            "freigegeben_von": {
+            "approved_by": {
               "type": "string",
               "minLength": 1
             }
@@ -100,5 +100,5 @@
       }
     ]
   },
-  "description": "Weitere Regeln, die das Schema nicht ausdrücken kann und der Lader prüft: freigegeben_von != erstellt_von; Laufzeit max. 12 Monate (risiko_akzeptiert: 6); kritische Befunde nur mit verifikation_sha256."
+  "description": "Further rules the schema cannot express and the loader enforces: approved_by != created_by; validity at most 12 months (risk_accepted: 6); critical findings only with verification_sha256."
 }

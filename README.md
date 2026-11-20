@@ -1,33 +1,33 @@
-# Software-Audit
+# Software Audit
 
-Spezifikation eines **evidenzbasierten, KI-gestützten Prüf- und Freigabesystems** für Software-Repositories.
+Specification of an **evidence-based, AI-assisted audit and release system** for software repositories.
 
-KI-Agenten sind darin spezialisierte Prüfer, aber nie die alleinige Instanz, die über Qualität, Sicherheit oder Compliance entscheidet. Ein LLM darf eine Behauptung aufstellen. Das System muss sie belegen oder als unbestätigt kennzeichnen. Die Freigabe trifft ein deterministisches Gate, keine LLM-Abstimmung.
+AI agents act as specialised reviewers in this system, but they are never the sole authority on quality, security or compliance. An LLM may make a claim. The system must prove it or mark it as unconfirmed. The release decision is made by a deterministic gate, not by an LLM vote.
 
-> **Stand:** Spezifikation, Version 0.1 (Entwurf). Es gibt noch keinen Code in diesem Repository.
+> **Status:** Specification, version 0.1 (draft). There is no code in this repository yet.
 
-## Dokumente
+## Documents
 
-| Nr. | Dokument | Inhalt |
+| No. | Document | Content |
 |---|---|---|
-| 01 | [Grundsätze und Ziele](docs/spezifikation/01-grundsaetze-und-ziele.md) | Anspruch, Prinzipien, Ergebniszustände, Begriffe, Nicht-Ziele |
-| 02 | [Architektur](docs/spezifikation/02-architektur.md) | Bausteine, Datenfluss, Vertrauensgrenzen, Bezug zum bestehenden Audit-Skill v2.5 |
-| 03 | [Phase 1: Reproduzierbares technisches Audit](docs/spezifikation/03-phase-1.md) | Schlanker erster Ausbau mit Akzeptanzkriterien |
-| 04 | [Datenformate](docs/spezifikation/04-datenformate.md) | Run-Manifest, Inventar, Befund v3, Lese-Protokoll, Suppressions, Gate-Ergebnis |
-| 05 | [Unabhängige Verifikation](docs/spezifikation/05-verifikation.md) | Rangfolge der Verifikationsmethoden, Regeln gegen Selbstbestätigung |
-| 06 | [Benchmark](docs/spezifikation/06-benchmark.md) | Benchmark-Repo mit 20 eingebauten Fehlern, Ködern und Manipulationsversuch, Metriken, Messprotokoll |
-| 07 | [Compliance-Katalog](docs/spezifikation/07-compliance-katalog.md) | Versionierter Anforderungskatalog, Anwendbarkeit durch Menschen, zu prüfende Fristen |
-| 08 | [Freigabe-Gate](docs/spezifikation/08-freigabe-gate.md) | Deterministische Freigaberegeln und Prüfprofile |
-| 09 | [Roadmap und offene Entscheidungen](docs/spezifikation/09-roadmap.md) | Phasen, Reihenfolge, Entscheidungen, die noch ausstehen |
+| 01 | [Principles and goals](docs/spec/01-principles-and-goals.md) | Claim, principles, result states, terms, non-goals |
+| 02 | [Architecture](docs/spec/02-architecture.md) | Components, data flow, trust boundaries, relation to the existing audit skill v2.5 |
+| 03 | [Phase 1: Reproducible technical audit](docs/spec/03-phase-1.md) | Lean first increment with acceptance criteria |
+| 04 | [Data formats](docs/spec/04-data-formats.md) | Run manifest, inventory, finding v3, access log, suppressions, gate result |
+| 05 | [Independent verification](docs/spec/05-verification.md) | Ranking of verification methods, rules against self-confirmation |
+| 06 | [Benchmark](docs/spec/06-benchmark.md) | Benchmark repo with 20 seeded bugs, decoys and an injection attempt; metrics; measurement protocol |
+| 07 | [Compliance catalogue](docs/spec/07-compliance-catalogue.md) | Versioned requirements catalogue, applicability decided by humans, deadlines to verify |
+| 08 | [Release gate](docs/spec/08-release-gate.md) | Deterministic release rules and audit profiles |
+| 09 | [Roadmap and open decisions](docs/spec/09-roadmap.md) | Phases, order, pending decisions |
 
-Die JSON-Schemas zu Dokument 04 liegen unter [`schemas/`](schemas/).
+The JSON schemas for document 04 are in [`schemas/`](schemas/).
 
-## Empfohlene Reihenfolge
+## Recommended order
 
-1. **Phase 0 – Benchmark (1–2 Wochen):** Benchmark-Repo bauen und den bestehenden Audit-Skill v2.5 dagegen messen. Ergebnis: Recall, Precision und Abdeckung als Zahlen statt Bauchgefühl.
-2. **Phase 1 – Reproduzierbares technisches Audit:** fixierter Commit, Inventar, Tool-Runner, Evidence Store, maschinell nachgewiesene Abdeckung, minimales Gate.
-3. Danach je nach Messergebnis: Verifikation (Phase 2), Compliance-as-Code (Phase 3), kontinuierliche Prüfung (Phase 4).
+1. **Phase 0 – Benchmark (1–2 weeks):** build the benchmark repo and measure the existing audit skill v2.5 against it. Result: recall, precision and coverage as numbers instead of gut feeling.
+2. **Phase 1 – Reproducible technical audit:** pinned commit, inventory, tool runner, evidence store, machine-verified coverage, minimal gate.
+3. Then, depending on the measurements: verification (Phase 2), compliance as code (Phase 3), continuous auditing (Phase 4).
 
-## Lizenz
+## Licence
 
-MIT, siehe [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/peterkarlhuber/software-audit/schemas/run-manifest.schema.json",
-  "title": "Run-Manifest eines Audit-Laufs",
+  "title": "Run manifest of an audit run",
   "type": "object",
   "required": [
     "schema_version",
@@ -57,7 +57,7 @@
         "prepare_status": {
           "enum": [
             "ok",
-            "abgelehnt"
+            "rejected"
           ]
         },
         "prepare_warnings": {
@@ -105,7 +105,7 @@
         "sandbox": {
           "enum": [
             "bubblewrap",
-            "keine"
+            "none"
           ]
         },
         "cgroups": {
@@ -182,7 +182,7 @@
         }
       }
     },
-    "catalog": {
+    "catalogue": {
       "type": "object",
       "properties": {
         "version": {

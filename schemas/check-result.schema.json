@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/peterkarlhuber/software-audit/schemas/check-result.schema.json",
-  "title": "Ergebnis eines Prüfpunkts",
+  "title": "Result of a check",
   "type": "object",
   "required": [
     "check_id",

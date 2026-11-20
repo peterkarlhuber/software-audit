@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/peterkarlhuber/software-audit/schemas/inventory.schema.json",
-  "title": "Datei-Inventar eines Repositorys an einem Commit",
+  "title": "File inventory of a repository at a commit",
   "type": "object",
   "required": [
     "schema_version",

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/peterkarlhuber/software-audit/schemas/access-log-entry.schema.json",
-  "title": "Eintrag im Lese-Protokoll (vom Datei-Gateway geschrieben, eine JSON-Zeile je Zugriff)",
+  "title": "Access log entry (written by the file gateway, one JSON line per access)",
   "type": "object",
   "required": [
     "ts",
