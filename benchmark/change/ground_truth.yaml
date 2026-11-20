@@ -1,0 +1,20 @@
+# Ground truth for the change-audit benchmark built by build_target.sh (branch feature vs. main).
+# Never copy this file into the benchmark repository.
+# Only defects introduced by the change are expected. Pre-existing bugs of the base benchmark
+# lie outside the change; findings about them are allowed but must be marked "outside the change".
+benchmark: postbox-change
+version: 1
+bugs:
+  - id: C01
+    title: The refactor drops the ownership check, so any logged-in user can read any message
+    severity: critical
+    items: [SEC-AUTHZ-01]
+    keywords: [owner, any user, any message, authoriz, idor]
+    locations: [{file: app/api/messages.py, lines: [35, 42]}]
+decoys:
+  - id: CD1
+    title: New mark-unread endpoint filters by owner (correct)
+    locations: [{file: app/api/messages.py, lines: [45, 52]}]
+    items: [SEC-AUTHZ-01]
+    keywords: [owner, any user, any message, authoriz, idor]
+injections: []

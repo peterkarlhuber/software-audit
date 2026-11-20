@@ -391,7 +391,7 @@ def main():
             notes.append(f"quote not verified; backed only by tool ({', '.join(tool_ok)})")
         f["in_change"] = bool(f.get("file")) and in_change(change, f.get("file"), f.get("lines"))
         if change and not f["in_change"]:
-            notes.append("outside the audited change (pre-existing code)")
+            notes.append("location outside the changed lines")
         f["status"] = status
         f["check_notes"] = notes
         if f.get("checklist_id") not in applicable:
@@ -469,7 +469,7 @@ def main():
                 res = "UNKNOWN"
                 reason = "FAIL not accepted: no finding with valid evidence" + (f" ({', '.join(r.get('finding_ids', []))})" if r.get("finding_ids") else "")
             elif change and not any(findings[x].get("in_change") for x in good):
-                reason = (reason + " " if reason else "") + "All findings lie outside the change (pre-existing code)."
+                reason = (reason + " " if reason else "") + "All findings lie outside the changed lines."
         elif res == "N/A":
             if len(reason) < 10:
                 res, reason = "UNKNOWN", "N/A without a reason"
@@ -536,8 +536,8 @@ def render(o):
     ch = run.get("change")
     if ch:
         L.append(f"> **Change audit.** Only the change from `{ch['base']}` (merge base `{ch['base_commit'][:12]}`) to this "
-                 f"commit was audited: {len(ch['files'])} changed files, {len(ch['deleted'])} deleted, "
-                 f"{ch.get('commits', '?')} commits. The rest of the repository was not reviewed. Checklist results "
+                 f"commit was audited: changed files {len(ch['files'])}, deleted files {len(ch['deleted'])}, "
+                 f"commits {ch.get('commits', '?')}. The rest of the repository was not reviewed. Checklist results "
                  "refer to the change only.")
         L.append("")
         L.append("Changed files: " + ", ".join(f"`{p}`" for p in list(ch["files"])[:40])
@@ -571,7 +571,7 @@ def render(o):
         L.append("")
         for f in top[:10]:
             L.append(f"- **{f['severity']}** ({f['status']}): {md(f.get('title'))} – `{f.get('file')}:{f.get('lines')}`"
-                     + ("" if f.get("in_change", True) or not ch else " (outside the change)"))
+                     + ("" if f.get("in_change", True) or not ch else " (outside the changed lines)"))
         L.append("")
     cov = o["coverage"]
     if cov["measured"]:
@@ -594,7 +594,7 @@ def render(o):
         L.append(f"### {f.get('id')} · {md(f.get('title'))}")
         L.append("")
         L.append(f"- Severity: **{f['severity']}** · Status: **{f['status']}** · Checklist: {f.get('checklist_id')}"
-                 + ("" if f.get("in_change", True) or not ch else " · **outside the change**"))
+                 + ("" if f.get("in_change", True) or not ch else " · **outside the changed lines**"))
         if f.get("file"):
             L.append(f"- Location: `{f['file']}:{f.get('lines')}`")
         if f.get("quote"):

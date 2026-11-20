@@ -527,7 +527,7 @@ def test_change_audit_marks_findings_outside_change_and_reports_scope(change_run
     items, findings, res = check(rd)
     assert findings["F-SEC-001"]["in_change"] is True
     assert findings["F-SEC-002"]["in_change"] is False
-    assert any("outside the audited change" in n for n in findings["F-SEC-002"]["check_notes"])
+    assert any("outside the changed lines" in n for n in findings["F-SEC-002"]["check_notes"])
     assert res["untriaged_tool_findings"] == [] and res["tool_findings_outside_change"] == ["T-sast-002"]
     assert res["coverage"]["code_files"] == 2  # only the changed files api.py and new.py
     report = (rd / "report.md").read_text()

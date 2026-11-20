@@ -4,7 +4,7 @@ A repeatable, AI-assisted audit for any Git repository. Open Claude Code in the 
 
 Output: `.audit/<run>/report.md` (to read) and `.audit/<run>/results.json` (machine-readable) inside the audited repository.
 
-> Status: v0.3.2. The audit checks technical controls and collects evidence; it does not establish legal compliance (GDPR, AI Act, CRA). Every report says so.
+> Status: v0.3.3. The audit checks technical controls and collects evidence; it does not establish legal compliance (GDPR, AI Act, CRA). Every report says so.
 
 ## Install
 
@@ -25,6 +25,8 @@ In the repository to audit:
 ```
 /software-audit                      # static audit, no repo code is executed
 /software-audit with tests           # also runs the test suite and confirming tests (sandboxed)
+/software-audit this PR against main # change audit: only the diff since the merge base with main
+/software-audit repos A and B        # one run per repository plus a combined overview
 ```
 
 To leave a folder out (for example a deliberately vulnerable demo app), say so, e.g. `/software-audit excluding benchmark/target`; the skill passes it to `prepare.py --exclude` and the report lists it.
@@ -35,10 +37,10 @@ Commit or stash your changes first: the audit stops on a dirty working tree so t
 
 | Path | Content |
 |---|---|
-| [docs/spec.md](docs/spec.md) | Specification v0.3.2 |
+| [docs/spec.md](docs/spec.md) | Specification v0.3.3 |
 | [docs/research.md](docs/research.md) | How others build AI-assisted audits today |
 | [skill/software-audit/](skill/software-audit/) | The skill: procedure, checklists, scripts, schema |
-| [benchmark/](benchmark/) | Test repo with 11 known bugs, ground truth and scorer |
+| [benchmark/](benchmark/) | Test repo with 11 known bugs, ground truth and scorer; `change/` for change audits |
 | [tests/](tests/) | Self-tests for the scripts (`python3 -m pytest -q tests/`) |
 
 ## Benchmark

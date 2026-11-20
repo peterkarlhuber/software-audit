@@ -37,7 +37,8 @@ def render(runs):
         valid = [f for f in o["findings"] if f.get("status") != "invalid_evidence"]
         sev = {s: sum(1 for f in valid if f["severity"] == s) for s in SEVERITIES}
         ch = run.get("change")
-        scope = f"change since `{ch['base']}` ({len(ch['files'])} files)" if ch else "full"
+        n = len(ch["files"]) if ch else 0
+        scope = f"change since `{ch['base']}` ({n} file{'' if n == 1 else 's'})" if ch else "full"
         if run.get("dirty"):
             scope += ", dirty tree"
         L.append(f"| [{md(run['repo_name'])}]({p / 'report.md'}) | `{run['commit'][:12]}` | {scope} | "
@@ -52,7 +53,7 @@ def render(runs):
         L.append("None reported. This does not mean the software is free of defects; see the reports.")
     for repo, f in sorted(top, key=lambda x: (SEVERITIES.index(x[1]["severity"]), x[0], x[1].get("id", ""))):
         L.append(f"- **{f['severity']}** ({f['status']}) {md(repo)}: {md(f.get('title'))} – "
-                 f"`{f.get('file')}:{f.get('lines')}`" + ("" if f.get("in_change", True) else " (outside the change)"))
+                 f"`{f.get('file')}:{f.get('lines')}`" + ("" if f.get("in_change", True) else " (outside the changed lines)"))
     L.append("")
     unk = [(p, o) for p, o in runs if o.get("problems") or not o.get("coverage", {}).get("measured")]
     if unk:

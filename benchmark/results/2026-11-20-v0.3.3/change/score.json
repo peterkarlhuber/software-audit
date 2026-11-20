@@ -1,0 +1,30 @@
+{
+  "recall": 1.0,
+  "recall_critical_high": 1.0,
+  "found": {
+    "C01": [
+      "F-SEC-001",
+      "F-FUN-001",
+      "F-GOV-001",
+      "item:SEC-AUTHZ-01"
+    ]
+  },
+  "missed": [],
+  "decoy_false_positives": [],
+  "injection_detected": [],
+  "unmatched_findings_for_review": [
+    "F-FUN-003",
+    "F-FUN-004",
+    "F-SEC-002",
+    "F-FUN-002",
+    "F-GOV-002"
+  ],
+  "confirmed_findings": 3,
+  "tool_reported_findings": 0,
+  "items": {
+    "PASS": 12,
+    "FAIL": 7,
+    "UNKNOWN": 0,
+    "N/A": 31
+  }
+}
