@@ -5,17 +5,25 @@ tests and confirmation tests can run.
 Usage:
   install_deps.py RUN_DIR
 
-Needs a run started with --allow-exec (or --allow-exec-unsandboxed). The repository itself is
-never changed: its tracked files are copied to RUN/workspace and dependencies are installed there,
-inside the bubblewrap sandbox with network access (empty home, stripped environment).
-Afterwards run_tools.py and run_test.py run repo code from that workspace.
+Installing needs network access, so it runs only if the run was started with
+prepare.py --allow-install (or --allow-install-scripts), on top of --allow-exec. The repository
+itself is never changed: its tracked files are copied to RUN/workspace and dependencies are
+installed there, inside the bubblewrap sandbox with network access (ordinary user, empty home,
+only proxy/CA settings in the environment, no credentials). Afterwards run_tools.py and
+run_test.py run repo code from that workspace.
+
+Package install scripts are third-party code. By default they do not run:
+  - npm/pnpm/yarn with --ignore-scripts (native modules are then not built)
+  - pip with --only-binary :all: (no sdist or git builds) and without installing the project
+    itself (tests run with `python -m pytest` from the project folder, which imports it)
+With --allow-install-scripts they run, still inside the sandbox.
 
 Per package root (a folder with a lockfile or Python project file, outside excluded paths):
   - package-lock.json      -> npm ci            (large binary downloads such as Electron skipped)
   - pnpm-lock.yaml         -> pnpm install --frozen-lockfile (if pnpm is installed)
   - yarn.lock              -> yarn install --frozen-lockfile (if yarn is installed)
   - pyproject/setup.py/requirements*.txt -> one shared venv RUN/workspace/.audit-venv with pytest,
-    the dev/test requirements, the lock file, requirements.txt and the project itself
+    the dev/test requirements, the lock file, requirements.txt (and, with scripts, the project)
 Results go to RUN/deps.json; failures are recorded, not fatal.
 """
 import os
@@ -78,6 +86,44 @@ def copy_tracked(repo, dest):
     dest.mkdir(parents=True, exist_ok=True)
 
 
+def requirement_entries(text):
+    """Requirement entries of a requirements file, continuation lines joined; options,
+    includes and editable/path entries are left out."""
+    entries, cur = [], ""
+    for line in text.splitlines():
+        line = line.split(" #", 1)[0].rstrip() if not line.lstrip().startswith("#") else ""
+        if line.endswith("\\"):
+            cur += line[:-1] + " "
+            continue
+        cur += line
+        e = cur.strip()
+        cur = ""
+        if e and not e.startswith(("-", ".", "/")):
+            entries.append(e)
+    return entries
+
+
+def install_one_by_one(ws, sandboxed, venv_py, base, d, req, no_deps):
+    try:
+        entries = requirement_entries((base / req).read_text(errors="ignore"))
+    except OSError:
+        return None
+    tmp = ws / ".audit-req"
+    tmp.mkdir(exist_ok=True)
+    root_ref = "/work" if sandboxed else str(ws)
+    missing = []
+    for i, e in enumerate(entries):
+        (tmp / f"{i}.txt").write_text(e + "\n")
+        hashed = "--hash" in e
+        argv = [venv_py, "-m", "pip", "install", "-q", "--only-binary", ":all:", "-r", f"{root_ref}/.audit-req/{i}.txt"] \
+            + (["--no-deps"] if no_deps or hashed else [])
+        code, _ = run_in(ws, sandboxed, argv, d)
+        if code != 0:
+            missing.append(e.split()[0])
+    shutil.rmtree(tmp, ignore_errors=True)
+    return missing
+
+
 def has_workspaces(pkg):
     try:
         return '"workspaces"' in pkg.read_text(errors="ignore")
@@ -120,6 +166,13 @@ def main():
         print("skipped: bubblewrap is not installed")
         write_json(rd / "deps.json", {"status": "skipped", "reason": "bubblewrap not installed", "steps": []})
         return
+    install = run.get("install_mode", "none")
+    if install == "none":
+        print("skipped: installing dependencies needs network access and was not allowed for this run "
+              "(prepare.py --allow-install, or --allow-install-scripts to also run package install scripts)")
+        write_json(rd / "deps.json", {"status": "skipped", "reason": "install_mode none", "steps": []})
+        return
+    scripts = install == "scripts"
     repo = Path(run["repo"])
     inv = read_json(rd / "inventory.json")
     js, py = package_roots(inv, run.get("exclude", []))
@@ -149,7 +202,7 @@ def main():
             steps.append({"root": d or ".", "tool": tool, "status": "missing", "note": f"{tool} not installed"})
             continue
         argv = {"npm": ["npm", "ci"], "pnpm": ["pnpm", "install", "--frozen-lockfile"],
-                "yarn": ["yarn", "install", "--frozen-lockfile"]}[tool]
+                "yarn": ["yarn", "install", "--frozen-lockfile"]}[tool] + ([] if scripts else ["--ignore-scripts"])
         code, out = run_in(ws, sandboxed, argv, d)
         steps.append({"root": d or ".", "tool": tool, "command": argv,
                       "status": "ok" if code == 0 else "failed", "exit_code": code, "output_tail": out[-1500:]})
@@ -164,7 +217,8 @@ def main():
         steps.append({"root": ".", "tool": "venv", "status": "ok" if ok else "failed", "exit_code": code,
                       "output_tail": out[-800:]})
         if ok:
-            code, out = run_in(ws, sandboxed, [venv_py, "-m", "pip", "install", "-q", "pytest"])
+            pip_bin = [] if scripts else ["--only-binary", ":all:"]
+            code, out = run_in(ws, sandboxed, [venv_py, "-m", "pip", "install", "-q", "pytest"] + pip_bin)
             steps.append({"root": ".", "tool": "pip", "command": ["pip", "install", "pytest"],
                           "status": "ok" if code == 0 else "failed", "exit_code": code, "output_tail": out[-800:]})
             for d in py:
@@ -175,13 +229,21 @@ def main():
                 locked = False
                 for req in reqs:
                     no_deps = locked and req == "requirements.txt"
-                    argv = [venv_py, "-m", "pip", "install", "-q", "-r", req] + (["--no-deps"] if no_deps else [])
+                    argv = [venv_py, "-m", "pip", "install", "-q", "-r", req] + (["--no-deps"] if no_deps else []) + pip_bin
                     code, out = run_in(ws, sandboxed, argv, d)
-                    steps.append({"root": d or ".", "tool": "pip", "command": argv[1:], "status": "ok" if code == 0 else "failed",
-                                  "exit_code": code, "output_tail": out[-1500:]})
-                    locked = locked or (code == 0 and "lock" in req)
+                    step = {"root": d or ".", "tool": "pip", "command": argv[1:], "status": "ok" if code == 0 else "failed",
+                            "exit_code": code, "output_tail": out[-1500:]}
+                    if code != 0 and not scripts:
+                        # without builds one sdist-only package fails the whole file: install the
+                        # entries one by one and record which ones could not be installed
+                        missing = install_one_by_one(ws, sandboxed, venv_py, base, d, req, no_deps)
+                        step.update(status="partial" if missing is not None else "failed",
+                                    fallback="one by one, binary wheels only",
+                                    not_installed=missing if missing is not None else None)
+                    steps.append(step)
+                    locked = locked or (step["status"] != "failed" and "lock" in req)
                 req = bool(reqs)
-                if (base / "pyproject.toml").is_file() or (base / "setup.py").is_file():
+                if scripts and ((base / "pyproject.toml").is_file() or (base / "setup.py").is_file()):
                     # with a (locked) requirements file the dependencies are already installed;
                     # resolving them again from the project file can fail for pinned git sources
                     argv = [venv_py, "-m", "pip", "install", "-q", "-e", "."] + (["--no-deps"] if req else [])
@@ -189,9 +251,10 @@ def main():
                     steps.append({"root": d or ".", "tool": "pip", "command": argv[1:], "status": "ok" if code == 0 else "failed",
                                   "exit_code": code, "output_tail": out[-1500:]})
 
-    failed = [s for s in steps if s["status"] != "ok"]
+    failed = [s for s in steps if s["status"] not in ("ok",)]
     status = "ok" if not failed else ("partial" if len(failed) < len(steps) else "failed")
     write_json(rd / "deps.json", {"status": status, "sandbox": "bubblewrap (network on)" if sandboxed else "none",
+                                  "install_scripts": scripts,
                                   "workspace": str(ws), "venv": VENV if py else None, "steps": steps})
     run["workspace"] = str(ws)
     run["workspace_venv"] = VENV if py and (ws / VENV).is_dir() else None

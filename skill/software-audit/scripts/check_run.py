@@ -461,7 +461,7 @@ def main():
                 down.append("invalid evidence: " + "; ".join(ev_bad[:3]))
             if tool:
                 if tstat not in ("ok", "findings"):
-                    down.append(f"required tool group '{tool}' did not run ({tstat or 'no record'})")
+                    down.append(f"required tool group '{tool}' did not run completely ({tstat or 'no record'})")
                 else:
                     open_ = [t for t in tool_ids_for_item if triage.get(t, {}).get("verdict") != "false_positive"]
                     if open_:

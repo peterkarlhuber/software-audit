@@ -4,7 +4,7 @@ A repeatable, AI-assisted audit for any Git repository. Open Claude Code in the 
 
 Output: `.audit/<run>/report.md` (to read) and `.audit/<run>/results.json` (machine-readable) inside the audited repository.
 
-> Status: v0.3.4. The audit checks technical controls and collects evidence; it does not establish legal compliance (GDPR, AI Act, CRA). Every report says so.
+> Status: v0.3.5. The audit checks technical controls and collects evidence; it does not establish legal compliance (GDPR, AI Act, CRA). Every report says so.
 
 ## Install
 
@@ -37,7 +37,7 @@ Commit or stash your changes first: the audit stops on a dirty working tree so t
 
 | Path | Content |
 |---|---|
-| [docs/spec.md](docs/spec.md) | Specification v0.3.4 |
+| [docs/spec.md](docs/spec.md) | Specification v0.3.5 |
 | [docs/research.md](docs/research.md) | How others build AI-assisted audits today |
 | [skill/software-audit/](skill/software-audit/) | The skill: procedure, checklists, scripts, schema |
 | [benchmark/](benchmark/) | Test repo with 11 known bugs, ground truth and scorer; `change/` for change audits |
