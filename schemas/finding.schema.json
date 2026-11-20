@@ -1,0 +1,389 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/peterkarlhuber/software-audit/schemas/finding.schema.json",
+  "title": "Audit-Befund v3 (abwärtskompatibel zu Skill v2.5)",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "run_id",
+    "origin",
+    "repo",
+    "commit",
+    "file",
+    "lines",
+    "evidence_type",
+    "evidence",
+    "reproduce",
+    "status",
+    "severity",
+    "title",
+    "impact",
+    "recommendation",
+    "fingerprint",
+    "check_ids",
+    "evidence_refs",
+    "access_check",
+    "verification",
+    "history"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "3.0"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Z]{2,5}-[A-Za-z0-9]{2,6}-[0-9]{1,4}$"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "agent": {
+      "type": "string",
+      "description": "v2.5-Feld; bei KI-Befunden eine der 12 Rollen",
+      "enum": [
+        "architecture",
+        "code-quality",
+        "app-security",
+        "ai-security",
+        "qa",
+        "reliability",
+        "database",
+        "performance",
+        "devops",
+        "api",
+        "ux",
+        "docs",
+        "tool"
+      ]
+    },
+    "origin": {
+      "type": "object",
+      "required": [
+        "kind",
+        "name"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "tool",
+            "ai"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "rule_id": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        }
+      }
+    },
+    "repo": {
+      "type": "string",
+      "minLength": 1
+    },
+    "commit": {
+      "type": "string"
+    },
+    "file": {
+      "type": "string"
+    },
+    "lines": {
+      "type": "string",
+      "pattern": "^$|^[0-9]+(-[0-9]+)?$"
+    },
+    "evidence_type": {
+      "enum": [
+        "code",
+        "output"
+      ]
+    },
+    "evidence": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reproduce": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "bestätigt",
+        "plausibel",
+        "vermutet"
+      ]
+    },
+    "severity": {
+      "enum": [
+        "kritisch",
+        "hoch",
+        "mittel",
+        "niedrig"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "minLength": 3
+    },
+    "impact": {
+      "type": "string",
+      "minLength": 3
+    },
+    "recommendation": {
+      "type": "string",
+      "minLength": 3
+    },
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "check_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "requirement_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "type",
+          "sha256"
+        ],
+        "properties": {
+          "type": {
+            "enum": [
+              "code-snapshot",
+              "tool-output",
+              "test-log",
+              "access-log",
+              "verification-test",
+              "human-note"
+            ]
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "description": {
+            "type": "string"
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "access_check": {
+      "enum": [
+        "gelesen",
+        "nur_berührt",
+        "nicht_gelesen",
+        "nicht_anwendbar"
+      ]
+    },
+    "verification": {
+      "type": "object",
+      "required": [
+        "result"
+      ],
+      "properties": {
+        "result": {
+          "enum": [
+            "verifiziert",
+            "widerlegt",
+            "nicht prüfbar",
+            "nicht nachgeprüft"
+          ]
+        },
+        "method": {
+          "enum": [
+            "V1-test",
+            "V2-werkzeug",
+            "V3-anderes-modell",
+            "V4-gleiches-modell",
+            "V5-mensch"
+          ]
+        },
+        "independence": {
+          "enum": [
+            "methode",
+            "modell",
+            "keine",
+            "mensch"
+          ]
+        },
+        "verifier": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "ai",
+                "tool",
+                "human"
+              ]
+            },
+            "provider": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          }
+        },
+        "evidence_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "result": {
+                "enum": [
+                  "verifiziert",
+                  "widerlegt"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "method",
+              "independence",
+              "verifier",
+              "evidence_sha256"
+            ]
+          }
+        }
+      ]
+    },
+    "baseline_state": {
+      "enum": [
+        "neu",
+        "bekannt"
+      ]
+    },
+    "suppressed_by": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "found_by": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "merged_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "chief_note": {
+      "type": "string"
+    },
+    "history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "at",
+          "by",
+          "to",
+          "reason"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "by": {
+            "type": "string"
+          },
+          "from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "evidence_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "evidence_type": {
+            "const": "output"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "reproduce": {
+            "minLength": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "origin": {
+            "properties": {
+              "kind": {
+                "const": "ai"
+              }
+            }
+          },
+          "access_check": {
+            "enum": [
+              "nur_berührt",
+              "nicht_gelesen"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "const": "vermutet"
+          }
+        }
+      }
+    }
+  ]
+}

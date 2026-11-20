@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/peterkarlhuber/software-audit/schemas/check-result.schema.json",
+  "title": "Ergebnis eines Prüfpunkts",
+  "type": "object",
+  "required": [
+    "check_id",
+    "state",
+    "reason",
+    "finding_ids",
+    "evidence_refs",
+    "decided_by"
+  ],
+  "properties": {
+    "check_id": {
+      "type": "string",
+      "pattern": "^[A-Z]+(-[A-Z0-9]+)+-[0-9]{3}$"
+    },
+    "state": {
+      "enum": [
+        "PASS",
+        "FAIL",
+        "UNKNOWN",
+        "N/A"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 3
+    },
+    "finding_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "decided_by": {
+      "type": "string"
+    },
+    "na_decision": {
+      "type": "object",
+      "required": [
+        "by",
+        "at",
+        "reason"
+      ],
+      "properties": {
+        "by": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 10
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "N/A"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "na_decision"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "PASS"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "evidence_refs": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ]
+}

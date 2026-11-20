@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/peterkarlhuber/software-audit/schemas/inventory.schema.json",
+  "title": "Datei-Inventar eines Repositorys an einem Commit",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "repo",
+    "commit",
+    "files"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "repo": {
+      "type": "string"
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "sha256",
+          "bytes",
+          "class",
+          "in_scope"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lines": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "class": {
+            "enum": [
+              "source",
+              "test",
+              "config",
+              "build",
+              "ci",
+              "iac",
+              "docs",
+              "dependency-manifest",
+              "lockfile",
+              "generated",
+              "vendored",
+              "binary",
+              "data",
+              "other"
+            ]
+          },
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "in_scope": {
+            "type": "boolean"
+          },
+          "exclude_reason": {
+            "type": "string"
+          }
+        },
+        "if": {
+          "properties": {
+            "in_scope": {
+              "const": false
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "exclude_reason"
+          ]
+        }
+      }
+    },
+    "dependency_manifests": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "entry_points": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "test_suites": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "framework": {
+            "type": "string"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "submodules": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/peterkarlhuber/software-audit/schemas/suppression.schema.json",
+  "title": "Liste von Suppressions (YAML, gegen dieses Schema validiert)",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": [
+      "id",
+      "match",
+      "art",
+      "begruendung",
+      "erstellt_von",
+      "erstellt_am",
+      "gueltig_bis"
+    ],
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^SUP-[0-9]{4,}$"
+      },
+      "match": {
+        "type": "object",
+        "oneOf": [
+          {
+            "required": [
+              "fingerprint"
+            ]
+          },
+          {
+            "required": [
+              "rule_id",
+              "pfad_muster"
+            ]
+          }
+        ],
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "rule_id": {
+            "type": "string"
+          },
+          "pfad_muster": {
+            "type": "string"
+          }
+        }
+      },
+      "art": {
+        "enum": [
+          "false_positive",
+          "risiko_akzeptiert",
+          "nicht_anwendbar"
+        ]
+      },
+      "begruendung": {
+        "type": "string",
+        "minLength": 20
+      },
+      "erstellt_von": {
+        "type": "string"
+      },
+      "freigegeben_von": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "erstellt_am": {
+        "type": "string",
+        "format": "date"
+      },
+      "gueltig_bis": {
+        "type": "string",
+        "format": "date"
+      },
+      "verifikation_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "art": {
+              "const": "risiko_akzeptiert"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "freigegeben_von": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    ]
+  },
+  "description": "Weitere Regeln, die das Schema nicht ausdrücken kann und der Lader prüft: freigegeben_von != erstellt_von; Laufzeit max. 12 Monate (risiko_akzeptiert: 6); kritische Befunde nur mit verifikation_sha256."
+}
