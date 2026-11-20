@@ -4,7 +4,7 @@ A repeatable, AI-assisted audit for any Git repository. Open Claude Code in the 
 
 Output: `.audit/<run>/report.md` (to read) and `.audit/<run>/results.json` (machine-readable) inside the audited repository.
 
-> Status: v0.3.6. The audit checks technical controls and collects evidence; it does not establish legal compliance (GDPR, AI Act, CRA). Every report says so.
+> Status: v0.3.7. The audit checks technical controls and collects evidence; it does not establish legal compliance (GDPR, AI Act, CRA). Every report says so.
 
 ## Install
 
@@ -16,7 +16,7 @@ pip install pyyaml
 
 Recommended tools (missing ones leave the related checklist items `UNKNOWN`): gitleaks, semgrep, osv-scanner (or pip-audit / trivy), syft, hadolint, ruff. Semgrep also runs the rules bundled in `skill/software-audit/rules/semgrep/`, so it works without network access. For running tests and confirming findings: bubblewrap (Linux).
 
-If you use the skill through claude.ai instead, upload the folder `skill/software-audit` as a skill there. It replaces the older skill of the same name.
+If you use the skill through claude.ai instead, upload the folder `skill/software-audit` as a skill there. Build the upload from tracked files only, so no caches are included: `git archive --format=zip --prefix=software-audit/ -o software-audit-skill.zip HEAD:skill/software-audit`. It replaces the older skill of the same name.
 
 ## Use
 
@@ -37,7 +37,7 @@ Commit or stash your changes first: the audit stops on a dirty working tree so t
 
 | Path | Content |
 |---|---|
-| [docs/spec.md](docs/spec.md) | Specification v0.3.6 |
+| [docs/spec.md](docs/spec.md) | Specification v0.3.7 |
 | [docs/research.md](docs/research.md) | How others build AI-assisted audits today |
 | [skill/software-audit/](skill/software-audit/) | The skill: procedure, checklists, scripts, schema |
 | [benchmark/](benchmark/) | Test repo with 11 known bugs, ground truth and scorer; `change/` for change audits |

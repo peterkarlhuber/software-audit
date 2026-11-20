@@ -1,4 +1,4 @@
-# Software Audit – Specification v0.3.6
+# Software Audit – Specification v0.3.7
 
 ## 1. Goal
 
@@ -128,6 +128,11 @@ A second, small benchmark checks change audits: `benchmark/change/build_target.s
 
 There are no reviewer roles beyond the one agent, no chief, no second model and no release gate. There are also no approvals, no four-eyes principle, no signed evidence store, no legal requirements catalogue and no dashboard. Any of these can be added later if the benchmark or a real audit shows a concrete gap.
 
+### Known limitations
+
+- Confirmation tests outside pytest (for example `node:test`, Jest) can show the failure with the marker, but `run_test.py` cannot check which lines ran. Their outcome is `reproduced_unverified` and the finding stays `unconfirmed`. Seen on Levuvo Mail: all five tested findings failed as claimed and stayed `unconfirmed`. Read such findings as "shown by a test, not proven by coverage".
+- Without install scripts, packages that only exist as source or as VCS pins are not installed, so test suites that need them do not run (`not_installed` in `deps.json`).
+
 ## 8. Relation to skill v2.5
 
 v0.3.x replaces the v2.5 skill under the same name, `software-audit`.
@@ -148,18 +153,25 @@ v0.3.x replaces the v2.5 skill under the same name, `software-audit`.
 - bubblewrap (Linux) for running tests and confirming findings
 - Offline: Semgrep runs the bundled rules without network; set `AUDIT_SEMGREP_CONFIG=none` to skip the online ruleset or point it to a local rules folder. The dependency scan needs either osv.dev, a one-time download of the OSV offline database, or PyPI (pip-audit).
 
-## 10. Changes in v0.3.6
+## 10. Changes in v0.3.7
+
+From an external review of v0.3.6; no new features:
+- `tests`: when more test roots exist than are run (limit 8), the result is `incomplete`, not `ok`, and `not_run` lists the skipped roots.
+- `lint`: in a mixed Python/TypeScript project, a required part that did not run (ruff or tsc missing or failed, more than 10 tsconfig files) makes the result `incomplete`, even when the other part ran.
+- The skill ZIP is built from tracked files only (`git archive`), so `.ruff_cache` and other caches are no longer shipped. The `node:test` limitation is documented under "Known limitations" (section 7).
+
+## 11. Changes in v0.3.6
 
 - Fix for v0.3.5: without install scripts, direct-URL and VCS requirements (`pkg @ git+https://…`) are left out of the pip install and listed under `not_installed` in `deps.json`. `pip --only-binary :all:` does not cover them; pip built them anyway (found on Levuvo Mail, whose AI sidecar pins two packages to git commits).
 
-## 11. Changes in v0.3.5
+## 12. Changes in v0.3.5
 
 From an external review of v0.3.4; no new features:
 - Dependency installation needs its own permission (`--allow-install`), because it uses the network. Package install scripts are off by default (`--ignore-scripts`, `--only-binary :all:`); `--allow-install-scripts` turns them on, still in the sandbox. In v0.3.4, `install_deps.py` ran with every `--allow-exec` run, with network on and install scripts on (inside bubblewrap as an ordinary user, tracked files only, no credentials).
 - Semgrep rule or analysis errors make the `sast` result `incomplete` instead of clean.
 - `prepare.py` no longer writes `.git/info/exclude`; `.audit/.gitignore` does the same job from inside the audit folder.
 
-## 12. Changes in v0.3.4
+## 13. Changes in v0.3.4
 
 From the first real audit (Levuvo Mail, a Node/Electron + Python monorepo):
 - Lowering a severity no longer skips the confirmation test: findings of items that default to critical/high are queued in `confirm_queue.json`, stay `unconfirmed` without a test, and the report shows the checklist default.
@@ -171,13 +183,13 @@ From the first real audit (Levuvo Mail, a Node/Electron + Python monorepo):
 - Dependency advisories: `pass.md` now says a known vulnerability in a declared dependency is `real` even if the vulnerable code looks unused; reachability may only lower the severity. (In the first v0.3.4 benchmark run the security pass dismissed the PyYAML CVE as "never imported" and missed B11.)
 - Still open by design: coverage on large repositories (Levuvo Mail: 97 of 503 code files opened); splitting a pass over several agents would make the procedure more complex.
 
-## 13. Changes in v0.3.3
+## 14. Changes in v0.3.3
 
 - Change audits: `prepare.py --base REF`, tool findings and coverage limited to the change, `in_change` on findings (section 3).
 - Several repositories in one request: `summarize.py` overview.
 - Second benchmark `benchmark/change/` for change audits: a branch that drops an ownership check (must be found) and adds a correct endpoint (decoy).
 
-## 14. Changes in v0.3.2
+## 15. Changes in v0.3.2
 
 From the first real audit (the repository auditing itself):
 - `run_test.py`: constant comparisons such as `assert 1 == 2` are rejected like `assert False`.
@@ -187,7 +199,7 @@ From the first real audit (the repository auditing itself):
 - `prepare.py --exclude PATH`; skill files (`SKILL.md`, `.claude/agents|skills|commands`) count as AI features.
 - Checklists: OPS-CI-01 applies always, so a repository without CI fails it instead of N/A; new SEC-EXEC-01 for running untrusted code, commands and data without isolation (50 items).
 
-## 15. Changes in v0.3.1
+## 16. Changes in v0.3.1
 
 - `run_test.py`: a failing test with the marker is no longer enough. Trivial assertions are rejected; for pytest the failure must be the marked assertion in the test body and the cited lines must have run.
 - `prepare.py`: stops on uncommitted changes unless `--allow-dirty` is given.

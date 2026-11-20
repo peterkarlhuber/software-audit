@@ -310,6 +310,7 @@ def lint(root, tools_dir, inv):
     if not py and not ts:
         return record(tools_dir, "lint", status="not_applicable", tool="-", note="no Python or TypeScript files")
     fnd, cmds, notes, ran = [], [], [], False
+    missing_parts = []  # required sub-checks that did not run (e.g. tsc absent while ruff ran)
     if py:
         if shutil.which("ruff"):
             cmd = ["ruff", "check", "--output-format", "json", "--no-cache", "--exit-zero", str(root)]
@@ -323,8 +324,10 @@ def lint(root, tools_dir, inv):
                                 "line": x.get("location", {}).get("row"), "message": x.get("message"), "severity": "low"})
             else:
                 notes.append("ruff failed: " + (se or so)[-500:])
+                missing_parts.append("ruff")
         else:
             notes.append("ruff not installed")
+            missing_parts.append("ruff")
     tsconfigs = [p for p in has(inv, r"(^|/)tsconfig\.json$") if "node_modules/" not in p]
     if ts and tsconfigs:
         if shutil.which("tsc"):
@@ -350,6 +353,7 @@ def lint(root, tools_dir, inv):
             save_raw(tools_dir, "lint.tsc.txt", "\n".join(raw))
             if len(tsconfigs) > 10:
                 notes.append(f"{len(tsconfigs) - 10} more tsconfig.json files not checked")
+                missing_parts.append("tsc")
             if not RUN_META.get("workspace"):
                 notes.append("tsc ran without installed dependencies; missing-module errors are expected")
             if any(n.startswith("tsc failed") for n in notes):
@@ -358,9 +362,16 @@ def lint(root, tools_dir, inv):
                               note="; ".join(notes))
         else:
             notes.append("tsc not installed")
+            missing_parts.append("tsc")
     if not ran:
         return record(tools_dir, "lint", status="missing", tool="ruff/tsc", command=cmds, note="; ".join(notes))
-    return record(tools_dir, "lint", status="ran", tool="ruff/tsc", command=cmds, note="; ".join(notes), findings=fnd)
+    data = record(tools_dir, "lint", status="ran", tool="ruff/tsc", command=cmds, note="; ".join(notes), findings=fnd)
+    if missing_parts:
+        # one language was checked, another was not: not a clean result, findings are still triaged
+        data["status"] = "incomplete"
+        data["not_run"] = missing_parts
+        write_json(tools_dir / "lint.json", data)
+    return data
 
 
 def container(root, tools_dir, inv):
@@ -463,6 +474,10 @@ def tests(root, tools_dir, inv, run_meta):
                   tool="/".join(dict.fromkeys(n for n, _, _ in results)),
                   runs=outs, exit_code=max((c for c in codes if c is not None), default=None), note="; ".join(notes))
     data["status"] = "ok" if status == "ok" else ("findings" if status == "failed" else "error")
+    if skipped_runs and data["status"] != "error":
+        # suites that never ran cannot count as passed: items tied to the tests cannot PASS
+        data["status"] = "incomplete"
+        data["not_run"] = [d or "." for _, d, _ in skipped_runs]
     write_json(tools_dir / "tests.json", data)
     return data
 
