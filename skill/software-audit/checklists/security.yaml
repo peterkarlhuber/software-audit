@@ -1,8 +1,10 @@
 # Security. Pass 2.
+# Fields: id, area, title, applies_if, tool (optional: tool group whose output is required), how, evidence, severity_if_fail.
 - id: SEC-SECRETS-01
   area: security
   title: No secrets in the code or Git history
   applies_if: always
+  tool: secrets
   how: Triage every Gitleaks finding. A secret that was ever committed counts as leaked even if removed later.
   evidence: Gitleaks output in the run folder, triage per finding
   severity_if_fail: high
@@ -11,6 +13,7 @@
   area: security
   title: No dependencies with known high or critical vulnerabilities
   applies_if: always
+  tool: deps
   how: Triage the OSV/Trivy findings. Check whether the vulnerable code path is plausibly reachable.
   evidence: scanner output in the run folder, triage per finding
   severity_if_fail: high
@@ -19,6 +22,7 @@
   area: security
   title: Static analysis findings are triaged
   applies_if: always
+  tool: sast
   how: Triage every Semgrep finding as real or false positive with a one-line reason.
   evidence: Semgrep output in the run folder, triage per finding
   severity_if_fail: high
@@ -123,6 +127,7 @@
   area: security
   title: Containers are hardened
   applies_if: has_docker
+  tool: container
   how: Triage Hadolint/Trivy config output. Check non-root user, no secrets in build args or layers, pinned base images.
   evidence: Dockerfile:line, tool output
   severity_if_fail: medium

@@ -1,4 +1,5 @@
 # Functionality and quality. Pass 1 (together with operations.yaml).
+# Fields: id, area, title, applies_if, tool (optional: tool group whose output is required), how, evidence, severity_if_fail.
 - id: FUN-REQ-01
   area: functionality
   title: The intended behaviour is documented
@@ -75,6 +76,7 @@
   area: functionality
   title: The test suite passes
   applies_if: has_tests
+  tool: tests
   how: Use the test result from run_tools.sh. If tests were not executed, the result is UNKNOWN.
   evidence: test log in the run folder with exit code
   severity_if_fail: high
@@ -83,6 +85,7 @@
   area: functionality
   title: Type checking and linting show no errors
   applies_if: always
+  tool: lint
   how: Use the lint/type tool output. Triage each error.
   evidence: tool output in the run folder
   severity_if_fail: low

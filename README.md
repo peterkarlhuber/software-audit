@@ -1,23 +1,51 @@
 # Software Audit
 
-A repeatable, AI-assisted audit for any repository. One command, one agent, fixed checklists and standard tools, instead of writing a new prompt each time and hoping the agent checks everything.
+A repeatable, AI-assisted audit for any Git repository. Open Claude Code in the repository and type `/software-audit`. The skill runs standard tools, works through 49 fixed checklist items with one agent, confirms critical findings with tests, and a script checks that nothing was skipped or invented.
 
-It covers functionality, security, governance/compliance and operations. Every checklist item ends as `PASS`, `FAIL`, `UNKNOWN` or `N/A` with evidence, and the report states plainly what was not checked.
+Output: `.audit/<run>/report.md` (to read) and `.audit/<run>/results.json` (machine-readable) inside the audited repository.
 
-> **Status:** Specification v0.2 (draft). No code yet.
+> Status: v0.3. The audit checks technical controls and collects evidence; it does not establish legal compliance (GDPR, AI Act, CRA). Every report says so.
+
+## Install
+
+```bash
+git clone https://github.com/peterkarlhuber/software-audit
+cd software-audit && ./install.sh        # copies skill/software-audit to ~/.claude/skills/
+pip install pyyaml
+```
+
+Recommended tools (missing ones leave the related checklist items `UNKNOWN`): gitleaks, semgrep, osv-scanner or trivy, syft, hadolint, ruff. For running tests and confirming findings: bubblewrap (Linux).
+
+If you use the skill through claude.ai instead, upload the folder `skill/software-audit` as a skill there. It replaces the older skill of the same name.
+
+## Use
+
+In the repository to audit:
+
+```
+/software-audit                      # static audit, no repo code is executed
+/software-audit with tests           # also runs the test suite and confirming tests (sandboxed)
+```
 
 ## Contents
 
 | Path | Content |
 |---|---|
-| [docs/spec.md](docs/spec.md) | The specification |
-| [docs/research.md](docs/research.md) | How others build AI-assisted audits today, and what follows for this project |
-| [checklists/](checklists/) | The checklists that replace the prompt (49 items) |
-| [schemas/](schemas/) | JSON schemas for checklist results and findings |
+| [docs/spec.md](docs/spec.md) | Specification v0.3 |
+| [docs/research.md](docs/research.md) | How others build AI-assisted audits today |
+| [skill/software-audit/](skill/software-audit/) | The skill: procedure, checklists, scripts, schema |
+| [benchmark/](benchmark/) | Test repo with 11 known bugs, ground truth and scorer |
+| [tests/](tests/) | Self-tests for the scripts (`python3 -m pytest -q tests/`) |
 
-## Design in one sentence
+## Benchmark
 
-Tools run first, one agent works through a fixed checklist in three passes, critical findings are confirmed with a test, a script checks that nothing was skipped or invented, and a small test repo with known bugs shows what the audit misses.
+Run after every change to the skill, checklists or scripts:
+
+```bash
+benchmark/build_target.sh /tmp/postbox
+cd /tmp/postbox && claude     # /software-audit with tests
+python3 /path/to/software-audit/benchmark/score.py /tmp/postbox/.audit/<run>/results.json
+```
 
 ## Licence
 
