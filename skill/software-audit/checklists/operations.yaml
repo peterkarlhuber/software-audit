@@ -1,0 +1,57 @@
+# Operations. Pass 1 (together with functionality.yaml).
+# Fields: id, area, title, applies_if, tool (optional: tool group whose output is required), how, evidence, severity_if_fail.
+- id: OPS-BUILD-01
+  area: operations
+  title: The project builds from a clean checkout with documented steps
+  applies_if: always
+  how: Check that build/install steps are documented and that dependencies are pinned (lockfile present). Use the build result from run_tools.sh if execution was allowed.
+  evidence: file:line of instructions and lockfile path, or build log
+  severity_if_fail: medium
+
+- id: OPS-CI-01
+  area: operations
+  title: CI runs tests and checks on every change
+  applies_if: has_ci
+  how: Read the CI definitions. Check which jobs run tests, lint and security checks, and on which events.
+  evidence: CI file:line per job
+  severity_if_fail: low
+
+- id: OPS-CONF-01
+  area: operations
+  title: Configuration is separated from code and has safe defaults
+  applies_if: always
+  how: Check how configuration is loaded. Look for debug mode on by default, hard-coded hosts, missing validation of required settings.
+  evidence: file:line per setting
+  severity_if_fail: medium
+
+- id: OPS-DB-01
+  area: operations
+  title: Database migrations are safe
+  applies_if: has_db
+  how: Read migrations. Look for destructive changes without data migration or rollback path.
+  evidence: migration file:line
+  severity_if_fail: medium
+
+- id: OPS-LOG-01
+  area: operations
+  title: Errors and important events are logged in a usable way
+  applies_if: always
+  how: Check that failures in core paths are logged with enough context to diagnose them.
+  evidence: file:line of logging in core paths
+  severity_if_fail: low
+
+- id: OPS-BACKUP-01
+  area: operations
+  title: Persistent data can be backed up and restored
+  applies_if: has_db
+  how: Look for a documented or scripted backup and restore procedure.
+  evidence: file:line or a note that none exists
+  severity_if_fail: medium
+
+- id: OPS-PERF-01
+  area: operations
+  title: No obvious performance traps in hot paths
+  applies_if: has_db
+  how: Look for queries inside loops (N+1), unbounded result sets, loading whole files or tables into memory.
+  evidence: file:line per case
+  severity_if_fail: low

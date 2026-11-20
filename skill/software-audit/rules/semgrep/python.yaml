@@ -1,0 +1,155 @@
+# Bundled offline rules (Python). Small on purpose: high-signal patterns only.
+rules:
+  - id: py-sql-string-built-query
+    languages: [python]
+    severity: ERROR
+    message: SQL text is built with string formatting; use bound parameters.
+    patterns:
+      - pattern-either:
+          - pattern: $X.execute(f"...", ...)
+          - pattern: $X.execute("..." % ..., ...)
+          - pattern: $X.execute("...".format(...), ...)
+          - pattern: $X.execute("..." + ..., ...)
+          - pattern: text("..." + ...)
+          - pattern: text("...".format(...))
+          - pattern: $X.raw(f"...", ...)
+    metadata: {cwe: "CWE-89"}
+  - id: py-sql-text-fstring
+    languages: [python]
+    severity: ERROR
+    message: SQL text() built from an f-string; use bound parameters.
+    patterns:
+      - pattern: text($S)
+      - metavariable-regex:
+          metavariable: $S
+          regex: (?s).*\bf["'].*\{.*
+    metadata: {cwe: "CWE-89"}
+  - id: py-subprocess-shell-true
+    languages: [python]
+    severity: ERROR
+    message: subprocess with shell=True; avoid the shell or pass a fixed argument list.
+    pattern-either:
+      - pattern: subprocess.$F(..., shell=True, ...)
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
+    metadata: {cwe: "CWE-78"}
+  - id: py-eval-exec
+    languages: [python]
+    severity: ERROR
+    message: eval/exec on dynamic input executes arbitrary code.
+    patterns:
+      - pattern-either:
+          - pattern: eval($X)
+          - pattern: exec($X)
+      - pattern-not: eval("...")
+      - pattern-not: exec("...")
+    metadata: {cwe: "CWE-95"}
+  - id: py-unsafe-deserialisation
+    languages: [python]
+    severity: ERROR
+    message: Unsafe deserialisation (pickle, yaml.load without SafeLoader, marshal).
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+      - pattern: marshal.loads(...)
+      - pattern: yaml.load($X)
+      - pattern: yaml.load($X, Loader=yaml.Loader)
+      - pattern: yaml.load($X, Loader=yaml.UnsafeLoader)
+      - pattern: yaml.unsafe_load(...)
+    metadata: {cwe: "CWE-502"}
+  - id: py-tls-verify-disabled
+    languages: [python]
+    severity: ERROR
+    message: TLS certificate verification is disabled.
+    pattern-either:
+      - pattern: requests.$F(..., verify=False, ...)
+      - pattern: httpx.$F(..., verify=False, ...)
+      - pattern: ssl._create_unverified_context(...)
+    metadata: {cwe: "CWE-295"}
+  - id: py-jwt-verification-disabled
+    languages: [python]
+    severity: ERROR
+    message: JWT decoded without verifying signature or expiry.
+    pattern-either:
+      - pattern: 'jwt.decode(..., options={..., "verify_signature": False, ...}, ...)'
+      - pattern: 'jwt.decode(..., options={..., "verify_exp": False, ...}, ...)'
+      - pattern: jwt.decode(..., verify=False, ...)
+      - pattern: jwt.decode(..., algorithms=[..., "none", ...], ...)
+    metadata: {cwe: "CWE-347"}
+  - id: py-weak-hash-for-secrets
+    languages: [python]
+    severity: WARNING
+    message: MD5/SHA1 used; never use them for passwords or signatures.
+    pattern-either:
+      - pattern: hashlib.md5(...)
+      - pattern: hashlib.sha1(...)
+    metadata: {cwe: "CWE-328"}
+  - id: py-non-constant-time-secret-compare
+    languages: [python]
+    severity: WARNING
+    message: Secret compared with ==; use hmac.compare_digest.
+    patterns:
+      - pattern-either:
+          - pattern: $A == $SECRET
+          - pattern: $SECRET == $A
+      - metavariable-regex:
+          metavariable: $SECRET
+          regex: (?i).*(token|secret|password|api_key|signature).*
+    metadata: {cwe: "CWE-208"}
+  - id: py-flask-debug
+    languages: [python]
+    severity: WARNING
+    message: Debug mode enabled.
+    pattern-either:
+      - pattern: $APP.run(..., debug=True, ...)
+      - pattern: DEBUG = True
+    metadata: {cwe: "CWE-489"}
+  - id: py-bind-all-interfaces-temp-file
+    languages: [python]
+    severity: WARNING
+    message: Insecure temporary file creation (mktemp).
+    pattern: tempfile.mktemp(...)
+    metadata: {cwe: "CWE-377"}
+  - id: py-broad-exception-swallowed
+    languages: [python]
+    severity: WARNING
+    message: Broad exception caught and not re-raised; errors may be lost silently.
+    patterns:
+      - pattern-either:
+          - pattern: |
+              try:
+                  ...
+              except Exception:
+                  $BODY
+          - pattern: |
+              try:
+                  ...
+              except:
+                  $BODY
+      - pattern-not: |
+          try:
+              ...
+          except Exception:
+              ...
+              raise
+      - pattern-not: |
+          try:
+              ...
+          except:
+              ...
+              raise
+    metadata: {cwe: "CWE-390"}
+  - id: py-path-from-request
+    languages: [python]
+    severity: WARNING
+    message: File path built from a request parameter; check for path traversal.
+    patterns:
+      - pattern-inside: |
+          @$R.$M(...)
+          def $F(..., $NAME: str, ...):
+              ...
+      - pattern-either:
+          - pattern: $BASE / $NAME
+          - pattern: os.path.join(..., $NAME, ...)
+          - pattern: open($NAME, ...)
+    metadata: {cwe: "CWE-22"}

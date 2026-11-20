@@ -1,0 +1,274 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Output of one audit pass (RUN/passes/<pass>.json), written by the agent",
+  "type": "object",
+  "required": [
+    "pass",
+    "items",
+    "findings"
+  ],
+  "properties": {
+    "pass": {
+      "enum": [
+        "functionality",
+        "security",
+        "governance",
+        "extra"
+      ]
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "result"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "result": {
+            "enum": [
+              "PASS",
+              "FAIL",
+              "UNKNOWN",
+              "N/A"
+            ]
+          },
+          "examined": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "completeness": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "anyOf": [
+                {
+                  "required": [
+                    "file",
+                    "lines",
+                    "quote"
+                  ]
+                },
+                {
+                  "required": [
+                    "artifact"
+                  ]
+                }
+              ],
+              "properties": {
+                "file": {
+                  "type": "string"
+                },
+                "lines": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(-[0-9]+)?$"
+                },
+                "quote": {
+                  "type": "string",
+                  "minLength": 12
+                },
+                "artifact": {
+                  "type": "string",
+                  "description": "path of a file in the run folder, e.g. tools/secrets.json"
+                }
+              }
+            }
+          },
+          "finding_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "result": {
+                  "const": "PASS"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "examined",
+                "completeness",
+                "evidence"
+              ],
+              "properties": {
+                "examined": {
+                  "minItems": 1
+                },
+                "completeness": {
+                  "minLength": 30
+                },
+                "evidence": {
+                  "minItems": 1
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "result": {
+                  "const": "FAIL"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "finding_ids"
+              ],
+              "properties": {
+                "finding_ids": {
+                  "minItems": 1
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "result": {
+                  "enum": [
+                    "UNKNOWN",
+                    "N/A"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "reason"
+              ],
+              "properties": {
+                "reason": {
+                  "minLength": 3
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "checklist_id",
+          "title",
+          "severity",
+          "impact",
+          "recommendation"
+        ],
+        "anyOf": [
+          {
+            "required": [
+              "file",
+              "lines",
+              "quote"
+            ]
+          },
+          {
+            "required": [
+              "artifact"
+            ]
+          }
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^F-(FUN|SEC|GOV|EXT)-[0-9]{3,}$"
+          },
+          "checklist_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 3
+          },
+          "severity": {
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "file": {
+            "type": "string"
+          },
+          "lines": {
+            "type": "string"
+          },
+          "quote": {
+            "type": "string"
+          },
+          "artifact": {
+            "type": "string"
+          },
+          "impact": {
+            "type": "string",
+            "minLength": 3
+          },
+          "recommendation": {
+            "type": "string",
+            "minLength": 3
+          },
+          "tool_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^T-[a-z]+-[0-9]{3}$"
+            }
+          },
+          "status": {
+            "not": {},
+            "description": "Never set by the agent; check_run.py sets it"
+          }
+        }
+      }
+    },
+    "tool_triage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "tool_id",
+          "verdict",
+          "reason"
+        ],
+        "properties": {
+          "tool_id": {
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "real",
+              "false_positive"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 5
+          }
+        }
+      }
+    }
+  }
+}

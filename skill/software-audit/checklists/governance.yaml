@@ -1,0 +1,110 @@
+# Governance and compliance. Pass 3.
+# Fields: id, area, title, applies_if, tool (optional: tool group whose output is required), how, evidence, severity_if_fail.
+# These items check technical controls and collect evidence. Whether a law
+# applies to the product is decided by a person, not by the agent; the agent
+# reports what it found and flags gaps.
+- id: GOV-DATA-01
+  area: governance
+  title: Personal data is inventoried
+  applies_if: processes_personal_data
+  how: List every place where personal data is stored or sent (database tables, files, logs, caches, third-party APIs).
+  evidence: list with file:line per location
+  severity_if_fail: medium
+
+- id: GOV-DATA-02
+  area: governance
+  title: Personal data can be deleted completely
+  applies_if: processes_personal_data
+  how: Follow the delete or account-deletion path. Check that every location from GOV-DATA-01 is covered (attachments, indexes, caches, backups).
+  evidence: file:line of the deletion path per location
+  severity_if_fail: high
+
+- id: GOV-DATA-03
+  area: governance
+  title: Personal data is not written to logs
+  applies_if: processes_personal_data
+  how: Check log statements in paths that handle personal data, including error handlers.
+  evidence: file:line per log statement
+  severity_if_fail: medium
+
+- id: GOV-DATA-04
+  area: governance
+  title: Personal data is protected at rest and in transit
+  applies_if: processes_personal_data
+  how: Check encryption of sensitive fields or storage, TLS for external connections, access restrictions.
+  evidence: file:line per protection
+  severity_if_fail: medium
+
+- id: GOV-DATA-05
+  area: governance
+  title: Only necessary personal data is collected and kept
+  applies_if: processes_personal_data
+  how: Compare collected fields with their use. Look for retention periods or cleanup jobs.
+  evidence: file:line of models and cleanup
+  severity_if_fail: low
+
+- id: GOV-THIRD-01
+  area: governance
+  title: Data sent to third parties (incl. AI APIs) is known
+  applies_if: always
+  how: List every external service the code sends data to and what data is sent.
+  evidence: file:line per external call
+  severity_if_fail: medium
+
+- id: GOV-LIC-01
+  area: governance
+  title: Dependency licences are compatible with the intended distribution
+  applies_if: always
+  tool: sbom
+  how: Use the licence list from Syft. Flag copyleft (GPL, AGPL) and unknown licences.
+  evidence: SBOM in the run folder, list of flagged packages
+  severity_if_fail: medium
+
+- id: GOV-SBOM-01
+  area: governance
+  title: A software bill of materials can be produced
+  applies_if: always
+  tool: sbom
+  how: Check that Syft produced a complete SBOM.
+  evidence: SBOM file in the run folder
+  severity_if_fail: low
+
+- id: GOV-VULN-01
+  area: governance
+  title: There is a way to report and handle vulnerabilities
+  applies_if: always
+  how: Look for SECURITY.md, a security contact, or a documented update process.
+  evidence: file:line or a note that none exists
+  severity_if_fail: low
+
+- id: GOV-AI-01
+  area: governance
+  title: AI features are documented (purpose, model, data used)
+  applies_if: has_ai_features
+  how: Check that the documentation states what the AI feature does, which model/provider it uses and which data it receives.
+  evidence: doc file:line
+  severity_if_fail: medium
+
+- id: GOV-AI-02
+  area: governance
+  title: Users can recognise AI output and AI interactions are logged
+  applies_if: has_ai_features
+  how: Check that AI-generated content is marked in the UI or API and that prompts, tool calls and results are logged for later review.
+  evidence: file:line per mechanism
+  severity_if_fail: medium
+
+- id: GOV-AI-03
+  area: governance
+  title: A human can stop or override AI actions
+  applies_if: has_ai_features
+  how: Check for confirmation steps, undo or a kill switch for actions the AI performs.
+  evidence: file:line per mechanism
+  severity_if_fail: medium
+
+- id: GOV-DOC-01
+  area: governance
+  title: Documentation matches the code
+  applies_if: always
+  how: Compare claims in README and docs (security features, data handling, supported platforms) with the implementation.
+  evidence: doc file:line and code file:line per claim
+  severity_if_fail: low
