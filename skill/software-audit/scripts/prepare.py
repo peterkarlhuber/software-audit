@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (CHECKLIST_DIR, git, load_checklists, load_yaml, repo_root,  # noqa: E402
                     sandbox_available, sha256_file, write_json, die)
 
-SKILL_VERSION = "0.3.3"
+SKILL_VERSION = "0.3.4"
 
 CLASS_RULES = [
     ("vendored", re.compile(r"(^|/)(vendor|third_party|node_modules)/")),
@@ -41,16 +41,16 @@ OUT_OF_SCOPE = {"vendored", "generated", "binary"}
 # fact -> list of (file glob regex, content regex). A fact is true if any signal matches.
 FACT_SIGNALS = {
     "has_api": [(r"\.py$", r"@(app|router|bp|blueprint)\.(get|post|put|patch|delete|route)\(|APIRouter\(|FastAPI\(|Flask\(|urlpatterns"),
-                (r"\.(js|ts|mjs)$", r"\b(app|router)\.(get|post|put|patch|delete)\(|express\(\)|fastify\(|@(Get|Post|Controller)\(")],
+                (r"\.[cm]?[jt]sx?$", r"\b(app|router)\.(get|post|put|patch|delete)\(|express\(\)|fastify\(|@(Get|Post|Controller)\(")],
     "has_ui": [(r"\.(html|jsx|tsx|vue|svelte)$", r".")],
     "has_db": [(r"\.py$", r"sqlalchemy|sqlite3|psycopg|pymongo|django\.db|peewee|tortoise"),
-               (r"\.(js|ts)$", r"prisma|typeorm|sequelize|knex|mongoose|better-sqlite3|pg\b"),
+               (r"\.[cm]?[jt]sx?$", r"prisma|typeorm|sequelize|knex|mongoose|better-sqlite3|sqlite3?\b|node:sqlite|pg\b|drizzle-orm|dexie"),
                (r"(^|/)migrations?/", r".")],
     "has_tests": [(r"(^|/)(tests?|__tests__)/|(_test|\.test|\.spec)\.[a-z]+$|(^|/)test_[^/]+\.py$", r".")],
-    "has_ai_features": [(r"\.(py|js|ts|mjs)$", r"\b(openai|anthropic|langchain|llama_index|ollama|google\.generativeai|@anthropic-ai|mistralai|litellm|transformers)\b"),
+    "has_ai_features": [(r"\.py$|\.[cm]?[jt]sx?$", r"\b(openai|anthropic|langchain|llama_index|ollama|google\.generativeai|@anthropic-ai|mistralai|litellm|transformers)\b"),
                         # agent skills, subagents and commands are AI features too
                         (r"(^|/)(SKILL\.md|AGENTS\.md)$|(^|/)\.claude/(agents|skills|commands)/", r".")],
-    "processes_personal_data": [(r"\.(py|js|ts|sql|prisma)$", r"\b(email|e_mail|password|phone|address|birth|first_?name|last_?name|ip_address|user_?id)\b")],
+    "processes_personal_data": [(r"\.(py|sql|prisma)$|\.[cm]?[jt]sx?$", r"\b(email|e_mail|password|phone|address|birth|first_?name|last_?name|ip_address|user_?id)\b")],
     "has_docker": [(r"(^|/)Dockerfile", r".")],
     "has_ci": [(r"(^|/)(\.github/workflows/|\.gitlab-ci\.yml|\.circleci/)", r".")],
 }

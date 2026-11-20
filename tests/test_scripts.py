@@ -546,3 +546,122 @@ def test_summarize_combines_runs(run, change_run, tmp_path):
     assert "| [repo](" in text and "| [feature-repo](" in text
     assert "| full |" in text and "change since `main`" in text
     assert "does not establish legal compliance" in text
+
+
+# ---------------------------------------------------------------- v0.3.4 (first real run: Levuvo Mail)
+
+def test_lowered_severity_still_needs_a_test(run):
+    _, rd = run
+    write_pass(rd, [{"id": "SEC-AUTHN-01", "result": "FAIL", "finding_ids": ["F-SEC-001"]}],
+               [{"id": "F-SEC-001", "checklist_id": "SEC-AUTHN-01", "title": "Route without login", "severity": "low",
+                 **GOOD_QUOTE, "impact": "Lowered: dev only.", "recommendation": "Add auth.", "tool_ids": []}])
+    items, findings, _ = check(rd)
+    f = findings["F-SEC-001"]
+    assert f["status"] == "unconfirmed" and f["needs_test"] is True
+    assert f["severity_default"] == "critical"
+    assert any("lowered by the agent from critical to low" in n for n in f["check_notes"])
+    queue = json.loads((rd / "confirm_queue.json").read_text())
+    assert [q["id"] for q in queue] == ["F-SEC-001"]
+    assert "checklist default: critical" in (rd / "report.md").read_text()
+
+
+def test_medium_default_finding_is_not_queued(run):
+    _, rd = run
+    write_pass(rd, [], [{"id": "F-SEC-002", "checklist_id": "SEC-RATE-01", "title": "No rate limit", "severity": "medium",
+                         **GOOD_QUOTE, "impact": "i", "recommendation": "r", "tool_ids": []}])
+    _, findings, _ = check(rd)
+    items_doc = json.loads((rd / "items.json").read_text())
+    default = {i["id"]: i.get("severity_if_fail") for i in items_doc["applicable"]}.get("SEC-RATE-01")
+    if default in ("critical", "high"):
+        pytest.skip("checklist default changed")
+    assert findings["F-SEC-002"]["status"] == "evidenced" and not findings["F-SEC-002"]["needs_test"]
+    assert json.loads((rd / "confirm_queue.json").read_text()) == []
+
+
+def test_rejected_pass_for_unopened_files_is_a_problem(run, tmp_path):
+    repo, rd = run
+    t = tmp_path / "log.jsonl"
+    write_transcript(t, [("Grep", {"pattern": "get", "path": str(repo / "app")})])
+    write_pass(rd, [{"id": "SEC-AUTHN-01", "result": "PASS", "examined": ["app/api.py"],
+                     "completeness": "Listed every route in app/ with grep for '@app.' and checked each one.",
+                     "evidence": [GOOD_QUOTE]}])
+    sh(sys.executable, str(SCRIPTS / "check_run.py"), str(rd), "--transcripts", str(t))
+    res = json.loads((rd / "results.json").read_text())
+    assert any(p.startswith("SEC-AUTHN-01: PASS not accepted because examined files were never opened")
+               for p in res["problems"])
+
+
+def make_repo(tmp_path, files):
+    repo = tmp_path / "mono"
+    for rel, text in files.items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(text)
+    sh("git", "init", "-q", "-b", "main", cwd=repo)
+    sh("git", "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A", cwd=repo)
+    sh("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init", cwd=repo)
+    return repo
+
+
+def test_prepare_detects_db_in_mjs(tmp_path):
+    repo = make_repo(tmp_path, {"src/index.mjs": "const Database = require('better-sqlite3-multiple-ciphers');\n"})
+    sh(sys.executable, str(SCRIPTS / "prepare.py"), "--repo", str(repo))
+    rd = next((repo / ".audit").iterdir())
+    assert json.loads((rd / "facts.json").read_text())["has_db"]["value"] is True
+
+
+def test_test_roots_in_a_monorepo(tmp_path):
+    import run_tools
+    repo = make_repo(tmp_path, {
+        "package.json": json.dumps({"scripts": {"test": "node --test"}}),
+        "apps/web/package.json": json.dumps({"scripts": {"test": "vitest"}}),
+        "apps/ai/pyproject.toml": "[project]\nname='x'\n",
+        "apps/ai/tests/test_a.py": "def test_a():\n    assert 1\n",
+        "tools/test_b.py": "def test_b():\n    assert 1\n",
+    })
+    inv = [{"path": p, "in_scope": True} for p in
+           ("package.json", "apps/web/package.json", "apps/ai/pyproject.toml", "apps/ai/tests/test_a.py", "tools/test_b.py")]
+    py, js = run_tools.test_roots(repo, inv)
+    assert py == ["", "apps/ai"]
+    assert js == [""]  # apps/web is covered by the root test script
+
+
+def test_install_deps_copies_only_tracked_files_and_finds_roots(tmp_path):
+    import install_deps
+    repo = make_repo(tmp_path, {"package-lock.json": "{}", "package.json": "{}", "apps/ai/requirements.txt": "",
+                                "apps/ai/pyproject.toml": ""})
+    (repo / ".env").write_text("SECRET=1\n")  # untracked
+    (repo / "node_modules" / "x").mkdir(parents=True)
+    ws = tmp_path / "ws"
+    install_deps.copy_tracked(repo, ws)
+    assert (ws / "package.json").exists() and (ws / "apps/ai/pyproject.toml").exists()
+    assert not (ws / ".env").exists() and not (ws / "node_modules").exists()
+    inv = [{"path": p, "in_scope": True, "class": "x"} for p in
+           ("package-lock.json", "package.json", "apps/ai/requirements.txt", "apps/ai/pyproject.toml")]
+    js, py = install_deps.package_roots(inv, [])
+    assert js == {"": "package-lock.json"} and py == ["apps/ai"]
+
+
+def test_install_deps_skipped_without_exec(run):
+    _, rd = run
+    out = sh(sys.executable, str(SCRIPTS / "install_deps.py"), str(rd))
+    assert "skipped" in out
+    assert json.loads((rd / "deps.json").read_text())["status"] == "skipped"
+    assert "workspace" not in json.loads((rd / "run.json").read_text())
+
+
+@pytest.mark.parametrize("mode", ["unsandboxed", "sandboxed"])
+def test_run_repo_code_uses_workspace_subdir_and_work_placeholder(tmp_path, mode):
+    import common
+    if mode == "sandboxed" and not common.sandbox_available():
+        pytest.skip("bubblewrap not installed")
+    repo, ws = tmp_path / "repo", tmp_path / "ws"
+    (repo / "sub").mkdir(parents=True)
+    (ws / "sub").mkdir(parents=True)
+    (ws / "sub" / "marker.txt").write_text("from workspace")
+    run = {"exec_mode": mode, "workspace": str(ws)}
+    r = common.run_repo_code([sys.executable, "-c", "import os,sys; print(open('marker.txt').read(), sys.argv[1])",
+                              "{work}/x"], repo, run, subdir="sub")
+    assert r["exit_code"] == 0, r["output"]
+    assert "from workspace" in r["output"] and "{work}" not in r["output"]
+    if mode == "sandboxed":
+        assert "/work/x" in r["output"]
