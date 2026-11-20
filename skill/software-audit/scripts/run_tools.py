@@ -363,6 +363,10 @@ def lint(root, tools_dir, inv):
         else:
             notes.append("tsc not installed")
             missing_parts.append("tsc")
+    elif ts:
+        # TypeScript files without a tsconfig.json were not type-checked
+        notes.append("TypeScript files but no tsconfig.json; not type-checked")
+        missing_parts.append("tsc")
     if not ran:
         return record(tools_dir, "lint", status="missing", tool="ruff/tsc", command=cmds, note="; ".join(notes))
     data = record(tools_dir, "lint", status="ran", tool="ruff/tsc", command=cmds, note="; ".join(notes), findings=fnd)

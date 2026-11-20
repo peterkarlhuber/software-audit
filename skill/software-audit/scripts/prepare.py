@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (CHECKLIST_DIR, git, load_checklists, load_yaml, repo_root,  # noqa: E402
                     sandbox_available, sha256_file, write_json, die)
 
-SKILL_VERSION = "0.3.7"
+SKILL_VERSION = "0.3.8"
 
 CLASS_RULES = [
     ("vendored", re.compile(r"(^|/)(vendor|third_party|node_modules)/")),
