@@ -1,122 +1,30 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/peterkarlhuber/software-audit/schemas/finding.schema.json",
-  "title": "Audit finding v3 (extends the skill v2.5 format; German v2.5 values are mapped on import, see docs/spec/04-data-formats.md section 4.9)",
+  "title": "Audit finding",
   "type": "object",
   "required": [
-    "schema_version",
     "id",
-    "run_id",
-    "origin",
-    "repo",
-    "commit",
+    "checklist_id",
+    "title",
+    "severity",
+    "status",
     "file",
     "lines",
-    "evidence_type",
-    "evidence",
-    "reproduce",
-    "status",
-    "severity",
-    "title",
+    "quote",
     "impact",
-    "recommendation",
-    "fingerprint",
-    "check_ids",
-    "evidence_refs",
-    "access_check",
-    "verification",
-    "history"
+    "recommendation"
   ],
   "properties": {
-    "schema_version": {
-      "const": "3.0"
-    },
     "id": {
       "type": "string",
-      "pattern": "^[A-Z]{2,5}-[A-Za-z0-9]{2,6}-[0-9]{1,4}$"
+      "pattern": "^F-[0-9]{3,}$"
     },
-    "run_id": {
+    "checklist_id": {
       "type": "string"
     },
-    "agent": {
+    "title": {
       "type": "string",
-      "description": "v2.5 field; for AI findings one of the 12 roles",
-      "enum": [
-        "architecture",
-        "code-quality",
-        "app-security",
-        "ai-security",
-        "qa",
-        "reliability",
-        "database",
-        "performance",
-        "devops",
-        "api",
-        "ux",
-        "docs",
-        "tool",
-        "verifier"
-      ]
-    },
-    "origin": {
-      "type": "object",
-      "required": [
-        "kind",
-        "name"
-      ],
-      "properties": {
-        "kind": {
-          "enum": [
-            "tool",
-            "ai"
-          ]
-        },
-        "name": {
-          "type": "string"
-        },
-        "rule_id": {
-          "type": "string"
-        },
-        "model": {
-          "type": "string"
-        }
-      }
-    },
-    "repo": {
-      "type": "string",
-      "minLength": 1
-    },
-    "commit": {
-      "type": "string"
-    },
-    "file": {
-      "type": "string",
-      "description": "Path relative to the repo root; empty for repo-wide findings"
-    },
-    "lines": {
-      "type": "string",
-      "pattern": "^$|^[0-9]+(-[0-9]+)?$"
-    },
-    "evidence_type": {
-      "enum": [
-        "code",
-        "output"
-      ]
-    },
-    "evidence": {
-      "type": "string",
-      "minLength": 1
-    },
-    "reproduce": {
-      "type": "string",
-      "description": "Required when evidence_type=output"
-    },
-    "status": {
-      "enum": [
-        "confirmed",
-        "plausible",
-        "suspected"
-      ]
+      "minLength": 3
     },
     "severity": {
       "enum": [
@@ -126,9 +34,35 @@
         "low"
       ]
     },
-    "title": {
+    "status": {
+      "enum": [
+        "confirmed",
+        "plausible",
+        "unverified",
+        "not reproduced"
+      ]
+    },
+    "file": {
       "type": "string",
-      "minLength": 3
+      "description": "Relative to repo root; empty for repo-wide findings"
+    },
+    "lines": {
+      "type": "string",
+      "pattern": "^$|^[0-9]+(-[0-9]+)?$"
+    },
+    "quote": {
+      "type": "string",
+      "description": "Exact text from file; or tool/test output for repo-wide findings"
+    },
+    "source": {
+      "enum": [
+        "agent",
+        "tool"
+      ],
+      "description": "Who raised the finding"
+    },
+    "tool": {
+      "type": "string"
     },
     "impact": {
       "type": "string",
@@ -138,254 +72,41 @@
       "type": "string",
       "minLength": 3
     },
-    "fingerprint": {
+    "test": {
       "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
+      "description": "Path to the confirming test in the run folder"
     },
-    "check_ids": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "requirement_ids": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "evidence_refs": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "type",
-          "sha256"
-        ],
-        "properties": {
-          "type": {
-            "enum": [
-              "code-snapshot",
-              "tool-output",
-              "test-log",
-              "access-log",
-              "verification-test",
-              "human-note"
-            ]
-          },
-          "sha256": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "description": {
-            "type": "string"
-          },
-          "exit_code": {
-            "type": [
-              "integer",
-              "null"
-            ]
-          }
-        }
-      }
-    },
-    "access_check": {
-      "enum": [
-        "read",
-        "touched_only",
-        "not_read",
-        "not_applicable"
-      ]
-    },
-    "verification": {
-      "type": "object",
-      "required": [
-        "result"
-      ],
-      "properties": {
-        "result": {
-          "enum": [
-            "verified",
-            "refuted",
-            "not_verifiable",
-            "not_checked"
-          ]
-        },
-        "method": {
-          "enum": [
-            "V1-test",
-            "V2-tool",
-            "V3-other-model",
-            "V4-same-model",
-            "V5-human"
-          ]
-        },
-        "independence": {
-          "enum": [
-            "method",
-            "model",
-            "none",
-            "human"
-          ]
-        },
-        "verifier": {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "enum": [
-                "ai",
-                "tool",
-                "human"
-              ]
-            },
-            "provider": {
-              "type": "string"
-            },
-            "model": {
-              "type": "string"
-            },
-            "name": {
-              "type": "string"
-            }
-          }
-        },
-        "evidence_sha256": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
-        },
-        "note": {
-          "type": "string"
-        }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "result": {
-                "enum": [
-                  "verified",
-                  "refuted"
-                ]
-              }
-            }
-          },
-          "then": {
-            "required": [
-              "method",
-              "independence",
-              "verifier",
-              "evidence_sha256"
-            ]
-          }
-        }
-      ]
-    },
-    "baseline_state": {
-      "enum": [
-        "new",
-        "known"
-      ]
-    },
-    "suppressed_by": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "found_by": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "merged_ids": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "chief_note": {
+    "note": {
       "type": "string"
-    },
-    "history": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "at",
-          "by",
-          "to",
-          "reason"
-        ],
-        "properties": {
-          "at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "by": {
-            "type": "string"
-          },
-          "from": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "to": {
-            "type": "string"
-          },
-          "reason": {
-            "type": "string"
-          },
-          "evidence_sha256": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          }
-        }
-      }
     }
   },
   "allOf": [
     {
       "if": {
         "properties": {
-          "evidence_type": {
-            "const": "output"
+          "status": {
+            "const": "confirmed"
           }
         }
       },
       "then": {
-        "properties": {
-          "reproduce": {
-            "minLength": 1
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "origin": {
-            "properties": {
-              "kind": {
-                "const": "ai"
-              }
-            }
+        "anyOf": [
+          {
+            "required": [
+              "test"
+            ]
           },
-          "access_check": {
-            "enum": [
-              "touched_only",
-              "not_read"
+          {
+            "properties": {
+              "source": {
+                "const": "tool"
+              }
+            },
+            "required": [
+              "source"
             ]
           }
-        }
-      },
-      "then": {
-        "properties": {
-          "status": {
-            "const": "suspected"
-          }
-        }
+        ]
       }
     }
   ]

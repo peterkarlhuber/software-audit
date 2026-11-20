@@ -1,0 +1,88 @@
+# Functionality and quality. Pass 1 (together with operations.yaml).
+- id: FUN-REQ-01
+  area: functionality
+  title: The intended behaviour is documented
+  applies_if: always
+  how: Look for README, docs, specs or issues that describe what the software should do. If none exist, report it; do not invent requirements.
+  evidence: file:line of the description, or a note that none exists
+  severity_if_fail: medium
+
+- id: FUN-REQ-02
+  area: functionality
+  title: Documented features exist and behave as described
+  applies_if: always
+  how: For each feature in the documentation, find the implementation and compare. Report features that are promised but missing or different.
+  evidence: doc file:line and code file:line for each compared feature
+  severity_if_fail: medium
+
+- id: FUN-LOGIC-01
+  area: functionality
+  title: Core business logic handles edge cases (empty, zero, maximum, duplicates, boundaries)
+  applies_if: always
+  how: Identify the 3-5 most important functions from the entry points. Check loops, ranges, pagination, date and number handling for off-by-one and boundary errors.
+  evidence: file:line per function checked
+  severity_if_fail: medium
+
+- id: FUN-STATE-01
+  area: functionality
+  title: State transitions are complete and consistent (create, update, delete, restore)
+  applies_if: has_db
+  how: For each main entity, follow every state change. Check that related data, flags and counters are updated together.
+  evidence: file:line per transition
+  severity_if_fail: high
+
+- id: FUN-ERR-01
+  area: functionality
+  title: Errors are not swallowed
+  applies_if: always
+  how: Search for broad exception handlers (except Exception, catch (e) {}, empty catch). Check that each one logs, re-raises or handles the error so no data is silently lost.
+  evidence: file:line per handler
+  severity_if_fail: high
+
+- id: FUN-INPUT-01
+  area: functionality
+  title: Input is validated at the boundaries
+  applies_if: has_api
+  how: Check that request bodies, query parameters and file uploads are validated (types, ranges, lengths) before use.
+  evidence: file:line of validation per entry point
+  severity_if_fail: medium
+
+- id: FUN-CONC-01
+  area: functionality
+  title: Concurrent access does not corrupt data
+  applies_if: has_db
+  how: Look for read-modify-write sequences, counters and shared state without transaction or lock.
+  evidence: file:line per sequence
+  severity_if_fail: medium
+
+- id: FUN-RETRY-01
+  area: functionality
+  title: Retries are safe (idempotent) and bounded
+  applies_if: always
+  how: Find retry loops and repeated external calls. Check that a retry after partial success does not duplicate effects, and that retries have a limit.
+  evidence: file:line per retry
+  severity_if_fail: high
+
+- id: FUN-TEST-01
+  area: functionality
+  title: Tests exist for the core logic and they assert something
+  applies_if: always
+  how: Map tests to the core functions from FUN-LOGIC-01. Report core functions without tests and tests without meaningful assertions.
+  evidence: test file:line per core function
+  severity_if_fail: medium
+
+- id: FUN-TEST-02
+  area: functionality
+  title: The test suite passes
+  applies_if: has_tests
+  how: Use the test result from run_tools.sh. If tests were not executed, the result is UNKNOWN.
+  evidence: test log in the run folder with exit code
+  severity_if_fail: high
+
+- id: FUN-TYPES-01
+  area: functionality
+  title: Type checking and linting show no errors
+  applies_if: always
+  how: Use the lint/type tool output. Triage each error.
+  evidence: tool output in the run folder
+  severity_if_fail: low
