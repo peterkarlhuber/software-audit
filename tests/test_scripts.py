@@ -746,3 +746,43 @@ def test_vcs_requirements_are_not_built_without_scripts(tmp_path):
     assert path == "/work/.audit-req/apps_ai_requirements.txt"
     kept = (tmp_path / "ws" / ".audit-req" / "apps_ai_requirements.txt").read_text()
     assert "git+" not in kept and "plain==1.0" in kept and "--hash=sha256:00" in kept
+
+
+def test_test_suites_over_the_cap_make_tests_incomplete(tmp_path, monkeypatch):
+    import run_tools
+    root = tmp_path / "r"
+    root.mkdir()
+    inv = []
+    for i in range(run_tools.MAX_TEST_RUNS + 1):
+        pkg = root / f"p{i}" / "package.json"
+        pkg.parent.mkdir()
+        pkg.write_text(json.dumps({"scripts": {"test": "node --test"}}))
+        inv.append({"path": f"p{i}/package.json", "in_scope": True})
+    monkeypatch.setattr(run_tools, "run_repo_code", lambda cmd, root, meta, subdir="": {
+        "status": "ran", "exit_code": 0, "output": "# tests 1\n# pass 1\n# fail 0\n", "sandbox": "test"})
+    td = tmp_path / "tools"
+    td.mkdir()
+    out = run_tools.tests(root, td, inv, {"workspace": "x"})
+    assert out["status"] == "incomplete" and out["not_run"] == [f"p{run_tools.MAX_TEST_RUNS}"]
+    assert json.loads((td / "tests.json").read_text())["status"] == "incomplete"
+
+
+def test_missing_tsc_in_mixed_project_makes_lint_incomplete(tmp_path, monkeypatch):
+    import run_tools
+    root = tmp_path / "r"
+    root.mkdir()
+    (root / "a.py").write_text("x = 1\n")
+    (root / "b.ts").write_text("export const y = 1;\n")
+    (root / "tsconfig.json").write_text("{}")
+    inv = [{"path": p, "in_scope": True} for p in ("a.py", "b.ts", "tsconfig.json")]
+    monkeypatch.setattr(run_tools.shutil, "which", lambda t: "/usr/bin/ruff" if t == "ruff" else None)
+    monkeypatch.setattr(run_tools, "run", lambda cmd, cwd, timeout=1800: (0, "[]", ""))
+    td = tmp_path / "tools"
+    td.mkdir()
+    out = run_tools.lint(root, td, inv)
+    assert out["status"] == "incomplete" and out["not_run"] == ["tsc"] and "tsc not installed" in out["note"]
+    assert json.loads((td / "lint.json").read_text())["status"] == "incomplete"
+    # both languages checked: clean
+    monkeypatch.setattr(run_tools.shutil, "which", lambda t: "/usr/bin/" + t)
+    monkeypatch.setattr(run_tools, "RUN_META", {"workspace": str(root)})
+    assert run_tools.lint(root, td, inv)["status"] == "ok"
