@@ -166,9 +166,16 @@ def sast(root, tools_dir, inv):
     rule_errors = [e.get("message", "")[:200] for e in raw.get("errors", []) if e.get("level") != "warn"]
     if rule_errors:
         note = (note + "; " if note else "") + f"{len(rule_errors)} semgrep errors: {rule_errors[0]}"
-    return record(tools_dir, "sast", status="ran", tool="semgrep", command=cmd, exit_code=code,
+    data = record(tools_dir, "sast", status="ran", tool="semgrep", command=cmd, exit_code=code,
                   rulesets=[cmd[i + 1] for i, c in enumerate(cmd) if c == "--config"], version=version("semgrep"),
-                  output_file=rel, findings=fnd, note=note, scanned_files=len(raw.get("paths", {}).get("scanned", [])))
+                  output_file=rel, findings=fnd, note=note, scanned_files=len(raw.get("paths", {}).get("scanned", [])),
+                  errors=len(rule_errors))
+    if rule_errors:
+        # rules failed or files could not be analysed: the scan is not complete, so it must not
+        # count as a clean result (items tied to it cannot PASS); its findings are still triaged
+        data["status"] = "incomplete"
+        write_json(tools_dir / "sast.json", data)
+    return data
 
 
 def _osv_findings(raw, root, tool):

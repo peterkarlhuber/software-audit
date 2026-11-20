@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (CHECKLIST_DIR, git, load_checklists, load_yaml, repo_root,  # noqa: E402
                     sandbox_available, sha256_file, write_json, die)
 
-SKILL_VERSION = "0.3.4"
+SKILL_VERSION = "0.3.5"
 
 CLASS_RULES = [
     ("vendored", re.compile(r"(^|/)(vendor|third_party|node_modules)/")),
@@ -164,6 +164,12 @@ def main():
     g.add_argument("--allow-exec", action="store_true", help="allow running tests/builds (needs bubblewrap)")
     g.add_argument("--allow-exec-unsandboxed", action="store_true",
                    help="allow running tests/builds without bubblewrap (own trusted repos only)")
+    ap.add_argument("--allow-install", action="store_true",
+                    help="allow install_deps.py to download dependencies (network) into a sandboxed workspace "
+                         "copy; package install scripts stay off. Needs --allow-exec or --allow-exec-unsandboxed")
+    ap.add_argument("--allow-install-scripts", action="store_true",
+                    help="like --allow-install, and also run package install scripts (third-party code) "
+                         "inside the sandbox, e.g. to build native modules")
     ap.add_argument("--extra-checklist", action="append", default=[],
                     help="additional checklist file (absolute path or name in checklists/)")
     ap.add_argument("--allow-dirty", action="store_true",
@@ -222,20 +228,22 @@ def main():
     run_id = run_dir.name
     run_dir.mkdir(parents=True)
 
-    # Keep audit output out of git status of the audited repo.
-    exclude = Path(git(root, "rev-parse", "--git-path", "info/exclude").strip())
-    if not exclude.is_absolute():
-        exclude = root / exclude
-    exclude.parent.mkdir(parents=True, exist_ok=True)
-    if ".audit/" not in (exclude.read_text() if exclude.exists() else ""):
-        with open(exclude, "a") as f:
-            f.write("\n.audit/\n")
+    # Keep audit output out of git status and out of tools that honour .gitignore, without
+    # touching anything outside the audit folder (no .git/info/exclude, no repo .gitignore).
+    ignore = root / ".audit" / ".gitignore"
+    if not ignore.exists():
+        ignore.write_text("# written by the software-audit skill: ignore all audit output\n*\n")
 
     exec_mode = "none"
     if a.allow_exec:
         exec_mode = "sandboxed"
     elif a.allow_exec_unsandboxed:
         exec_mode = "unsandboxed"
+
+    install_mode = "scripts" if a.allow_install_scripts else ("no_scripts" if a.allow_install else "none")
+    if install_mode != "none" and exec_mode == "none":
+        die("--allow-install needs --allow-exec (or --allow-exec-unsandboxed): installed dependencies are only "
+            "used to run tests")
 
     facts = detect_facts(root, inv)
     for ov in a.fact:
@@ -275,6 +283,7 @@ def main():
         "run_id": run_id, "skill_version": SKILL_VERSION, "repo": str(root), "repo_name": root.name,
         "commit": commit, "dirty": bool(dirty), "dirty_files": dirty.splitlines()[:50],
         "started_at": now.isoformat(timespec="seconds"), "exec_mode": exec_mode,
+        "install_mode": install_mode,
         "sandbox_available": sandbox_available(),
         "extra_checklists": [str(p) for p in extra],
         "exclude": skip,
@@ -299,6 +308,7 @@ def main():
         by_pass[it["pass"]] = by_pass.get(it["pass"], 0) + 1
     print(f"checklist items: {len(applicable)} applicable ({by_pass}), {len(not_applicable)} not applicable")
     print(f"repo code execution: {exec_mode}; bubblewrap {'available' if run['sandbox_available'] else 'not installed'}")
+    print(f"dependency installation (network): {install_mode}")
 
 
 if __name__ == "__main__":

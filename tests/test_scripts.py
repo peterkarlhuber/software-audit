@@ -31,7 +31,7 @@ def run(tmp_path):
     sh("git", "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A", cwd=repo)
     sh("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init", cwd=repo)
     sh(sys.executable, str(SCRIPTS / "prepare.py"), "--repo", str(repo))
-    rd = next((repo / ".audit").iterdir())
+    rd = next(p for p in (repo / ".audit").iterdir() if p.is_dir())
     return repo, rd
 
 
@@ -195,7 +195,7 @@ def exec_run(tmp_path):
     sh("git", "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A", cwd=repo)
     sh("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init", cwd=repo)
     sh(sys.executable, str(SCRIPTS / "prepare.py"), "--repo", str(repo), "--allow-exec")
-    rd = next((repo / ".audit").iterdir())
+    rd = next(p for p in (repo / ".audit").iterdir() if p.is_dir())
     d = rd / "tests" / "F-FUN-001"
     d.mkdir(parents=True)
     return rd, d
@@ -259,7 +259,7 @@ def test_prepare_aborts_on_uncommitted_changes(run):
     r = subprocess.run([sys.executable, str(SCRIPTS / "prepare.py"), "--repo", str(repo)], capture_output=True, text=True)
     assert r.returncode != 0 and "--allow-dirty" in (r.stdout + r.stderr)
     sh(sys.executable, str(SCRIPTS / "prepare.py"), "--repo", str(repo), "--allow-dirty")
-    rd = sorted((repo / ".audit").iterdir())[-1]
+    rd = sorted(p for p in (repo / ".audit").iterdir() if p.is_dir())[-1]
     assert json.loads((rd / "run.json").read_text())["dirty"] is True
 
 
@@ -369,7 +369,7 @@ def test_prepare_exclude_drops_paths_from_scope_facts_and_evidence(tmp_path):
                          capture_output=True, text=True)
     assert bad.returncode != 0 and "matches no tracked file" in bad.stdout + bad.stderr
     sh(sys.executable, str(SCRIPTS / "prepare.py"), "--repo", str(repo), "--exclude", "demo/")
-    rd = next((repo / ".audit").iterdir())
+    rd = next(p for p in (repo / ".audit").iterdir() if p.is_dir())
     assert json.loads((rd / "run.json").read_text())["exclude"] == ["demo"]
     inv = {f["path"]: f for f in json.loads((rd / "inventory.json").read_text())}
     assert inv["demo/app.py"]["in_scope"] is False
@@ -461,7 +461,7 @@ def change_run(tmp_path):
     (repo / "app" / "old.py").unlink()
     git_commit(repo, "feature")
     sh(sys.executable, str(SCRIPTS / "prepare.py"), "--repo", str(repo), "--base", "main")
-    rd = next((repo / ".audit").iterdir())
+    rd = next(p for p in (repo / ".audit").iterdir() if p.is_dir())
     return repo, rd
 
 
@@ -605,7 +605,7 @@ def make_repo(tmp_path, files):
 def test_prepare_detects_db_in_mjs(tmp_path):
     repo = make_repo(tmp_path, {"src/index.mjs": "const Database = require('better-sqlite3-multiple-ciphers');\n"})
     sh(sys.executable, str(SCRIPTS / "prepare.py"), "--repo", str(repo))
-    rd = next((repo / ".audit").iterdir())
+    rd = next(p for p in (repo / ".audit").iterdir() if p.is_dir())
     assert json.loads((rd / "facts.json").read_text())["has_db"]["value"] is True
 
 
@@ -665,3 +665,70 @@ def test_run_repo_code_uses_workspace_subdir_and_work_placeholder(tmp_path, mode
     assert "from workspace" in r["output"] and "{work}" not in r["output"]
     if mode == "sandboxed":
         assert "/work/x" in r["output"]
+
+
+# ---------------------------------------------------------------- v0.3.5 (review fixes)
+
+def test_prepare_does_not_touch_git_info_exclude(run):
+    repo, rd = run
+    exclude = repo / ".git" / "info" / "exclude"
+    assert ".audit" not in (exclude.read_text() if exclude.exists() else "")
+    assert (repo / ".audit" / ".gitignore").read_text().strip().endswith("*")
+    status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=repo,
+                            capture_output=True, text=True).stdout
+    assert status == ""
+
+
+def test_install_needs_explicit_network_permission(tmp_path):
+    repo = make_repo(tmp_path, {"package.json": "{}", "package-lock.json": "{}"})
+    r = subprocess.run([sys.executable, str(SCRIPTS / "prepare.py"), "--repo", str(repo), "--allow-install"],
+                       capture_output=True, text=True)
+    assert r.returncode != 0 and "--allow-exec" in r.stderr
+    sh(sys.executable, str(SCRIPTS / "prepare.py"), "--repo", str(repo), "--allow-exec-unsandboxed")
+    rd = next(p for p in (repo / ".audit").iterdir() if p.is_dir())
+    assert json.loads((rd / "run.json").read_text())["install_mode"] == "none"
+    out = sh(sys.executable, str(SCRIPTS / "install_deps.py"), str(rd))
+    assert "skipped" in out and "--allow-install" in out
+    assert not (rd / "workspace").exists()
+
+
+def test_install_scripts_off_by_default(tmp_path, monkeypatch):
+    import install_deps
+    repo = make_repo(tmp_path, {"package.json": "{}", "package-lock.json": "{}", "requirements.txt": "x\n",
+                                "pyproject.toml": "[project]\nname='x'\n"})
+    calls = []
+    monkeypatch.setattr(install_deps, "run_in", lambda ws, sb, argv, subdir="", env_extra=None: (calls.append(argv) or (0, "")))
+    monkeypatch.setattr(install_deps.shutil, "which", lambda t: "/usr/bin/" + t)
+    for mode, expect_scripts in (("no_scripts", False), ("scripts", True)):
+        sh(sys.executable, str(SCRIPTS / "prepare.py"), "--repo", str(repo), "--allow-exec-unsandboxed",
+           "--allow-install-scripts" if expect_scripts else "--allow-install")
+        rd = sorted(p for p in (repo / ".audit").iterdir() if p.is_dir())[-1]
+        calls.clear()
+        monkeypatch.setattr(sys, "argv", ["install_deps.py", str(rd)])
+        monkeypatch.setattr(install_deps, "sandbox_available", lambda: False)
+        install_deps.main()
+        npm = next(c for c in calls if c[0] == "npm")
+        pips = [c for c in calls if "pip" in c and "install" in c]
+        assert ("--ignore-scripts" in npm) is not expect_scripts
+        assert all((":all:" in c) is not expect_scripts for c in pips)
+        assert any("-e" in c for c in pips) is expect_scripts
+
+
+def test_semgrep_errors_make_sast_incomplete(run, tmp_path, monkeypatch):
+    import run_tools
+    repo, rd = run
+    raw = {"results": [], "errors": [{"level": "error", "message": "Invalid rule schema"}],
+           "paths": {"scanned": ["app/api.py"]}}
+    monkeypatch.setattr(run_tools.shutil, "which", lambda t: "/usr/bin/" + t)
+    monkeypatch.setattr(run_tools, "run", lambda cmd, cwd, timeout=1800: (1, json.dumps(raw), ""))
+    monkeypatch.setattr(run_tools, "version", lambda t: "test")
+    td = rd / "tools"
+    td.mkdir(exist_ok=True)
+    out = run_tools.sast(repo, td, [])
+    assert out["status"] == "incomplete" and "Invalid rule schema" in out["note"]
+    write_pass(rd, [{"id": "SEC-SAST-01", "result": "PASS", "examined": ["app/api.py"],
+                     "completeness": "Semgrep ran over every source file and all findings were triaged.",
+                     "evidence": [{"artifact": "tools/sast.json"}]}])
+    items, _, _ = check(rd)
+    assert items["SEC-SAST-01"]["result"] == "UNKNOWN"
+    assert "did not run completely (incomplete)" in items["SEC-SAST-01"]["reason"]
