@@ -433,3 +433,116 @@ def test_tool_findings_in_excluded_paths_are_dropped(tmp_path):
     finally:
         run_tools.EXCLUDE[:] = []
     assert out["finding_count"] == 2 and out["excluded_findings"] == 1
+
+
+# ---------------------------------------------------------------- change audit (prepare.py --base)
+
+def git_commit(repo, msg):
+    sh("git", "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A", cwd=repo)
+    sh("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", msg, cwd=repo)
+
+
+@pytest.fixture()
+def change_run(tmp_path):
+    """Repo with a base commit on main and a feature branch that edits api.py, adds new.py, deletes old.py."""
+    repo = tmp_path / "feature-repo"
+    (repo / "app").mkdir(parents=True)
+    api = [f"x{i} = {i}" for i in range(1, 21)]
+    (repo / "app" / "api.py").write_text("\n".join(api) + "\n")
+    (repo / "app" / "old.py").write_text("print('old')\n")
+    (repo / "README.md").write_text("# Demo\n")
+    sh("git", "init", "-q", "-b", "main", cwd=repo)
+    git_commit(repo, "base")
+    sh("git", "checkout", "-q", "-b", "feature", cwd=repo)
+    api[9] = "x10 = eval(input())  # changed line"
+    del api[16]  # remove line 17
+    (repo / "app" / "api.py").write_text("\n".join(api) + "\n")
+    (repo / "app" / "new.py").write_text("import os\nos.system(input())\n")
+    (repo / "app" / "old.py").unlink()
+    git_commit(repo, "feature")
+    sh(sys.executable, str(SCRIPTS / "prepare.py"), "--repo", str(repo), "--base", "main")
+    rd = next((repo / ".audit").iterdir())
+    return repo, rd
+
+
+def test_prepare_base_records_changed_lines(change_run):
+    _, rd = change_run
+    run = json.loads((rd / "run.json").read_text())
+    ch = run["change"]
+    assert ch["base"] == "main" and ch["commits"] == 1
+    assert ch["files"] == {"app/api.py": ["10-10", "16-16"], "app/new.py": ["1-2"]}
+    assert ch["deleted"] == ["app/old.py"]
+    inv = {f["path"]: f for f in json.loads((rd / "inventory.json").read_text())}
+    assert inv["app/api.py"].get("changed") and not inv["README.md"].get("changed")
+
+
+def test_prepare_base_without_changes_or_unknown_ref_stops(run):
+    repo, _ = run
+    r = subprocess.run([sys.executable, str(SCRIPTS / "prepare.py"), "--repo", str(repo), "--base", "HEAD"],
+                       capture_output=True, text=True)
+    assert r.returncode != 0 and "nothing to audit" in r.stderr
+    r = subprocess.run([sys.executable, str(SCRIPTS / "prepare.py"), "--repo", str(repo), "--base", "nope"],
+                       capture_output=True, text=True)
+    assert r.returncode != 0 and "merge base" in r.stderr
+
+
+def test_in_change_uses_line_ranges_with_margin():
+    from common import in_change
+    ch = {"files": {"a.py": ["10-12"], "bin.png": []}}
+    assert in_change(None, "anything.py", 5)
+    assert in_change(ch, "a.py", 14) and in_change(ch, "./a.py", "1-7") and in_change(ch, "a.py", None)
+    assert not in_change(ch, "a.py", 16) and not in_change(ch, "a.py", "1-6")
+    assert not in_change(ch, "b.py", 10)
+    assert in_change(ch, "bin.png", 99)
+
+
+def test_change_audit_drops_tool_findings_outside_change(tmp_path):
+    import run_tools  # noqa: E402
+    td = tmp_path / "tools"
+    td.mkdir()
+    run_tools.CHANGE.update({"files": {"app/api.py": ["10-10"]}})
+    try:
+        out = run_tools.record(td, "sast", status="ran", findings=[
+            {"file": "app/api.py", "line": 10}, {"file": "app/api.py", "line": 1}, {"file": "README.md", "line": 1}])
+    finally:
+        run_tools.CHANGE.clear()
+    assert out["finding_count"] == 1 and out["outside_change_findings"] == 2
+
+
+def test_change_audit_marks_findings_outside_change_and_reports_scope(change_run):
+    _, rd = change_run
+    (rd / "tools").mkdir(exist_ok=True)
+    (rd / "tools" / "sast.json").write_text(json.dumps({"group": "sast", "status": "findings"}))
+    (rd / "tools" / "sast.findings.json").write_text(json.dumps([
+        {"tool_id": "T-sast-001", "file": "app/api.py", "line": 10},
+        {"tool_id": "T-sast-002", "file": "app/api.py", "line": 1}]))  # outside: no triage needed
+    inside = {"id": "F-SEC-001", "checklist_id": "SEC-INJ-01", "title": "eval of user input", "severity": "medium",
+              "file": "app/api.py", "lines": "10", "quote": "x10 = eval(input())", "impact": "i", "recommendation": "r",
+              "tool_ids": ["T-sast-001"]}
+    outside = {**inside, "id": "F-SEC-002", "lines": "2", "quote": "x2 = 2  ...", "title": "old code"}
+    outside["quote"] = "x1 = 1\nx2 = 2\nx3 = 3\nx4 = 4"
+    write_pass(rd, [{"id": "SEC-INJ-01", "result": "FAIL", "finding_ids": ["F-SEC-001", "F-SEC-002"]}],
+               findings=[inside, outside],
+               triage=[{"tool_id": "T-sast-001", "verdict": "real", "reason": "eval of input"}])
+    items, findings, res = check(rd)
+    assert findings["F-SEC-001"]["in_change"] is True
+    assert findings["F-SEC-002"]["in_change"] is False
+    assert any("outside the audited change" in n for n in findings["F-SEC-002"]["check_notes"])
+    assert res["untriaged_tool_findings"] == [] and res["tool_findings_outside_change"] == ["T-sast-002"]
+    assert res["coverage"]["code_files"] == 2  # only the changed files api.py and new.py
+    report = (rd / "report.md").read_text()
+    assert "Change audit" in report and "outside the change" in report
+
+
+def test_summarize_combines_runs(run, change_run, tmp_path):
+    rds = []
+    for _, rd in (run, change_run):
+        write_pass(rd, [])
+        check(rd)
+        rds.append(str(rd))
+    out = tmp_path / "overview.md"
+    sh(sys.executable, str(SCRIPTS / "summarize.py"), *rds, "--out", str(out))
+    text = out.read_text()
+    assert "| [repo](" in text and "| [feature-repo](" in text
+    assert "| full |" in text and "change since `main`" in text
+    assert "does not establish legal compliance" in text

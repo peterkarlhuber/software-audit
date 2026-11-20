@@ -13,7 +13,8 @@ Reads items.json, tools/, tests/ and passes/*.json (written by the agent) and en
   - every quote must exist in the cited file near the cited lines
   - critical/high findings are "confirmed" only by a reproduced test (run_test.py);
     backed only by a tool finding triaged as real they are "tool_reported"; otherwise "unconfirmed"
-  - every tool finding must be triaged
+  - every tool finding must be triaged (in a change audit: every tool finding inside the change)
+  - in a change audit (prepare.py --base), findings outside the changed lines are marked as such
 The agent never sets a finding's status; this script does.
 """
 import argparse
@@ -27,7 +28,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import RESULTS, SEVERITIES, read_json, run_dir_from_arg, write_json  # noqa: E402
+from common import RESULTS, SEVERITIES, in_change, read_json, run_dir_from_arg, write_json  # noqa: E402
 
 DISCLAIMER = (
     "This audit checks technical controls and collects evidence. It does not establish legal "
@@ -304,9 +305,14 @@ def main():
              if not p.name.endswith((".findings.json", ".raw.json", ".cdx.json", ".licences.json", ".ruff.json"))} \
         if (rd / "tools").exists() else {}
     tool_findings = {}
+    change = run.get("change")
+    outside_tool_findings = []  # change audit: tool findings outside the change, not reviewed
     for p in (rd / "tools").glob("*.findings.json") if (rd / "tools").exists() else []:
         for f in read_json(p, []):
-            tool_findings[f["tool_id"]] = f
+            if in_change(change, f.get("file"), f.get("line")):
+                tool_findings[f["tool_id"]] = f
+            else:
+                outside_tool_findings.append(f["tool_id"])
 
     problems = []  # problems with the agent's output, shown in the report
     results, findings, triage = {}, {}, {}
@@ -383,6 +389,9 @@ def main():
         else:
             status = "tool_reported"
             notes.append(f"quote not verified; backed only by tool ({', '.join(tool_ok)})")
+        f["in_change"] = bool(f.get("file")) and in_change(change, f.get("file"), f.get("lines"))
+        if change and not f["in_change"]:
+            notes.append("outside the audited change (pre-existing code)")
         f["status"] = status
         f["check_notes"] = notes
         if f.get("checklist_id") not in applicable:
@@ -459,6 +468,8 @@ def main():
             if not good:
                 res = "UNKNOWN"
                 reason = "FAIL not accepted: no finding with valid evidence" + (f" ({', '.join(r.get('finding_ids', []))})" if r.get("finding_ids") else "")
+            elif change and not any(findings[x].get("in_change") for x in good):
+                reason = (reason + " " if reason else "") + "All findings lie outside the change (pre-existing code)."
         elif res == "N/A":
             if len(reason) < 10:
                 res, reason = "UNKNOWN", "N/A without a reason"
@@ -479,7 +490,8 @@ def main():
 
     # ---- coverage summary
     in_scope = [p for p, f in repo.inv.items() if f.get("in_scope") and f.get("class") not in ("binary", "symlink", "missing")]
-    code_like = [p for p in in_scope if repo.inv[p]["class"] in ("source", "test", "config", "container", "ci", "dependency-manifest")]
+    code_like = [p for p in in_scope if repo.inv[p]["class"] in ("source", "test", "config", "container", "ci", "dependency-manifest")
+                 and (not change or p in change["files"])]
     coverage = {"measured": coverage_measured, "transcripts": [str(t) for t in transcripts][:20],
                 "in_scope_files": len(in_scope), "opened": len(opened & set(in_scope)),
                 "code_files": len(code_like), "code_opened": len(opened & set(code_like)),
@@ -493,7 +505,8 @@ def main():
         "disclaimer": DISCLAIMER, "summary": summary, "items": final,
         "findings": sorted(findings.values(), key=lambda f: (SEVERITIES.index(f["severity"]), f.get("id", ""))),
         "tools": tools, "tool_findings": list(tool_findings.values()), "tool_triage": triage,
-        "untriaged_tool_findings": untriaged, "coverage": coverage, "problems": problems,
+        "untriaged_tool_findings": untriaged, "tool_findings_outside_change": outside_tool_findings,
+        "coverage": coverage, "problems": problems,
     }
     write_json(rd / "results.json", out)
     (rd / "report.md").write_text(render(out), encoding="utf-8")
@@ -520,6 +533,16 @@ def render(o):
     L.append("")
     L.append(f"Commit `{run['commit']}` · run `{run['run_id']}` · skill {run['skill_version']} · checked {o['checked_at']}")
     L.append("")
+    ch = run.get("change")
+    if ch:
+        L.append(f"> **Change audit.** Only the change from `{ch['base']}` (merge base `{ch['base_commit'][:12]}`) to this "
+                 f"commit was audited: {len(ch['files'])} changed files, {len(ch['deleted'])} deleted, "
+                 f"{ch.get('commits', '?')} commits. The rest of the repository was not reviewed. Checklist results "
+                 "refer to the change only.")
+        L.append("")
+        L.append("Changed files: " + ", ".join(f"`{p}`" for p in list(ch["files"])[:40])
+                 + (" …" if len(ch["files"]) > 40 else ""))
+        L.append("")
     if run.get("exclude"):
         L.append("> **Excluded by the user:** " + ", ".join(f"`{e}`" for e in run["exclude"])
                  + ". These paths were not audited and tool findings in them were dropped.")
@@ -547,11 +570,13 @@ def render(o):
         L.append("**Top risks**")
         L.append("")
         for f in top[:10]:
-            L.append(f"- **{f['severity']}** ({f['status']}): {md(f.get('title'))} – `{f.get('file')}:{f.get('lines')}`")
+            L.append(f"- **{f['severity']}** ({f['status']}): {md(f.get('title'))} – `{f.get('file')}:{f.get('lines')}`"
+                     + ("" if f.get("in_change", True) or not ch else " (outside the change)"))
         L.append("")
     cov = o["coverage"]
     if cov["measured"]:
-        L.append(f"Coverage: {cov['code_opened']} of {cov['code_files']} code files were opened by the agent (from the session log).")
+        L.append(f"Coverage: {cov['code_opened']} of {cov['code_files']} {'changed ' if ch else ''}code files were opened "
+                 "by the agent (from the session log).")
     else:
         L.append("Coverage: **not measured** (no session log). The check that cited files were actually opened was "
                  "skipped; examined files are as stated by the agent.")
@@ -568,7 +593,8 @@ def render(o):
     for f in o["findings"]:
         L.append(f"### {f.get('id')} · {md(f.get('title'))}")
         L.append("")
-        L.append(f"- Severity: **{f['severity']}** · Status: **{f['status']}** · Checklist: {f.get('checklist_id')}")
+        L.append(f"- Severity: **{f['severity']}** · Status: **{f['status']}** · Checklist: {f.get('checklist_id')}"
+                 + ("" if f.get("in_change", True) or not ch else " · **outside the change**"))
         if f.get("file"):
             L.append(f"- Location: `{f['file']}:{f.get('lines')}`")
         if f.get("quote"):
@@ -610,6 +636,10 @@ def render(o):
     if o["untriaged_tool_findings"]:
         L.append(f"**{len(o['untriaged_tool_findings'])} tool findings were not triaged:** "
                  + ", ".join(o["untriaged_tool_findings"][:30]) + (" …" if len(o["untriaged_tool_findings"]) > 30 else ""))
+        L.append("")
+    if o.get("tool_findings_outside_change"):
+        L.append(f"{len(o['tool_findings_outside_change'])} tool findings lie outside the change and were not reviewed "
+                 "(listed in results.json).")
         L.append("")
     if cov["measured"] and cov["not_opened_code_files"]:
         L.append(f"**Code files never opened ({len(cov['not_opened_code_files'])}):** "

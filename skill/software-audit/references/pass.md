@@ -22,6 +22,16 @@ You are running one pass of a repository audit. You work through a fixed list of
 5. Do not invent findings, line numbers, test results or tool output.
 6. Work item by item, in the order of `items.json`. Finish each item before starting the next.
 
+## Change audit
+
+If `RUN/run.json` has a `change` entry (not null), you audit **only that change** (a pull request or branch). `change.files` lists each changed file with its changed line ranges; `change.deleted` lists deleted files. For each item, the question is: does the change introduce or leave a problem this item covers?
+
+- Read every changed file you need, and the code it calls or that calls it, to judge the change in context. Removed lines matter too: a deleted check is a problem. Use `git -C REPO diff <change.base_commit> HEAD -- <file>` to see what was removed.
+- **N/A** if the change touches nothing the item covers, with a concrete reason (e.g. "the change only edits README.md").
+- **PASS** only if the change touches the item's subject and you checked all of it. `examined` lists the changed files and the files you read for context.
+- Report findings in the changed code. If you notice a serious problem outside the change, you may report it; the checking script marks it as outside the change.
+- `run_tools.py` already dropped tool findings outside the change; triage the remaining ones as usual.
+
 ## How to decide an item
 
 For each item, follow its `how` and `evidence` fields.

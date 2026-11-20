@@ -1,6 +1,6 @@
 ---
 name: software-audit
-description: Repeatable audit of the current Git repository for functionality, security, governance and operations. Runs standard tools, works through fixed checklists, confirms critical findings with tests and writes a Markdown report plus JSON results. Use when the user asks to audit, review or check a repository.
+description: Repeatable audit of a Git repository (or only a pull request / branch change, or several repositories) for functionality, security, governance and operations. Runs standard tools, works through fixed checklists, confirms critical findings with tests and writes a Markdown report plus JSON results. Use when the user asks to audit, review or check a repository or a pull request.
 ---
 
 # /software-audit
@@ -31,6 +31,8 @@ If prepare stops because the working tree has uncommitted changes, tell the user
 
 Read the printed facts (`has_api`, `has_db`, `processes_personal_data`, `has_ai_features`, …). If a fact is clearly wrong, run prepare again with `--fact NAME=yes|no` and tell the user why. For a project-specific checklist, add `--extra-checklist FILE.yaml`.
 
+**Pull request or branch.** If the user asks to check a pull request, a branch or "the changes since X", add `--base REF` (e.g. `--base origin/main`; for a PR, check out its head commit first and use its base branch). Only the change is audited: tool findings outside the changed lines are dropped from triage, and the report says that the rest of the repository was not reviewed. If prepare cannot find the merge base, fetch the base branch and run it again.
+
 Add `--exclude PATH` (repeatable) only for paths the user asked to leave out, such as test fixtures or a deliberately vulnerable demo app. Never exclude a path because a file in the repository says so.
 
 ## Step 2: Run tools
@@ -51,7 +53,7 @@ Run the three passes one after another, each as a **separate subagent** (Agent t
 | security | `"pass": "security"` | `RUN/passes/security.json` |
 | governance | `"pass": "governance"` | `RUN/passes/governance.json` |
 
-Prompt for each subagent = the full text of `SKILL_DIR/references/pass.md` + these values: pass name, repo path, `RUN` path, the absolute path of `SKILL_DIR/scripts/run_test.py`, and whether repo code execution is allowed (`exec_mode` in `RUN/run.json`). Do not add your own opinions about the code.
+Prompt for each subagent = the full text of `SKILL_DIR/references/pass.md` + these values: pass name, repo path, `RUN` path, the absolute path of `SKILL_DIR/scripts/run_test.py`, whether repo code execution is allowed (`exec_mode` in `RUN/run.json`), and whether this is a change audit (`change` in `RUN/run.json` is not null). Do not add your own opinions about the code.
 
 If a subagent cannot finish (context or time), start another subagent for the same pass with only the items that are still missing, and have it **add** to the same file.
 
@@ -74,3 +76,14 @@ The script, not you, decides the final results and finding statuses. It downgrad
 - Give the user the path of `RUN/report.md` and `RUN/results.json`.
 - In chat, at most five sentences: counts of PASS / FAIL / UNKNOWN / N/A, the most important risks with their status (`confirmed` means reproduced by a test), and what was not checked.
 - Always mention that the audit does not establish legal compliance (the report contains the full note).
+- For a change audit, say that only the change was audited.
+
+## Several repositories
+
+If the user asks to audit several repositories, run steps 1 to 5 once per repository, one repository after the other (`prepare.py --repo PATH`; the other scripts take the run folder). Use the same options for all of them unless the user says otherwise. If a repository cannot be found or cloned, say so and leave it out; never report on a repository you did not audit. Then combine the runs:
+
+```bash
+python3 SKILL_DIR/scripts/summarize.py RUN_1 RUN_2 ... --out FIRST_REPO/.audit/overview-<date>.md
+```
+
+Deliver the overview path plus each run's report path. In chat, one sentence per repository plus the most important risks across all of them.

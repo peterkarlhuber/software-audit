@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import read_json, run_dir_from_arg, run_repo_code, write_json  # noqa: E402
+from common import in_change, read_json, run_dir_from_arg, run_repo_code, write_json  # noqa: E402
 
 COPYLEFT = re.compile(r"\b(A?GPL|LGPL|SSPL|EUPL|OSL|CC-BY-SA|MPL)", re.I)
 
@@ -66,6 +66,7 @@ def has(inv, rx):
 
 
 EXCLUDE = []  # repo-relative path prefixes excluded with prepare.py --exclude
+CHANGE = {}   # run.json "change" entry in a change audit (prepare.py --base), else empty
 
 
 def excluded(path):
@@ -83,6 +84,11 @@ def record(tools_dir, group, **kw):
         if dropped:
             findings = [f for f in findings if not excluded(f.get("file"))]
             data["excluded_findings"] = len(dropped)
+        if CHANGE:
+            outside = [f for f in findings if not in_change(CHANGE, f.get("file"), f.get("line"))]
+            if outside:
+                findings = [f for f in findings if in_change(CHANGE, f.get("file"), f.get("line"))]
+                data["outside_change_findings"] = len(outside)
         for i, f in enumerate(findings, 1):
             f["tool_id"] = f"T-{group}-{i:03d}"
         data["finding_count"] = len(findings)
@@ -402,6 +408,8 @@ def main():
     root = Path(run_meta["repo"])
     inv = read_json(rd / "inventory.json")
     EXCLUDE[:] = run_meta.get("exclude", [])
+    CHANGE.clear()
+    CHANGE.update(run_meta.get("change") or {})
     tools_dir = rd / "tools"
     tools_dir.mkdir(exist_ok=True)
     summary = []
@@ -410,6 +418,8 @@ def main():
     summary.append(tests(root, tools_dir, inv, run_meta))
     for s in summary:
         extra = f", {s['finding_count']} findings" if "finding_count" in s else ""
+        if s.get("outside_change_findings"):
+            extra += f" ({s['outside_change_findings']} outside the change dropped)"
         print(f"{s['group']:<10} {s['status']:<15} {s.get('tool', '')}{extra}{' – ' + s['note'][:120] if s.get('note') else ''}")
 
 
